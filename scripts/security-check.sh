@@ -31,9 +31,9 @@ say "1. Secret scanning (code + git history)"
 if have gitleaks; then
   # gitleaks 8.19+ uses `git` (repo + history) / `dir` (files only); older versions use `detect`.
   if gitleaks git --help >/dev/null 2>&1; then
-    if [ -e "$TARGET/.git" ]; then gl=(gitleaks git --no-banner "$TARGET"); else gl=(gitleaks dir --no-banner "$TARGET"); fi
+    if [ -e "$TARGET/.git" ]; then gl=(gitleaks git --no-banner --redact "$TARGET"); else gl=(gitleaks dir --no-banner --redact "$TARGET"); fi
   else
-    gl=(gitleaks detect --no-banner --source "$TARGET")
+    gl=(gitleaks detect --no-banner --redact --source "$TARGET")
   fi
   if "${gl[@]}"; then
     ok "gitleaks found no secrets"
@@ -101,7 +101,13 @@ fi
 # ---------------------------------------------------------------------------
 say "4. Filesystem / container vulnerability scan"
 if have trivy; then
-  if trivy fs --quiet --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 "$TARGET"; then
+  # Local .env files are expected to hold secrets and should be gitignored;
+  # committed secrets are caught by gitleaks above. Skipping them avoids false
+  # alarms and keeps real credentials out of the output.
+  if trivy fs --quiet --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 \
+      --skip-dirs "**/node_modules" --skip-dirs "**/.git" --skip-dirs "**/.next" \
+      --skip-files "**/.env" --skip-files "**/.env.local" --skip-files "**/.env.*.local" \
+      "$TARGET"; then
     ok "trivy found no HIGH/CRITICAL issues"
   else
     warn "trivy flagged HIGH/CRITICAL vulnerabilities, secrets or misconfigurations — review above"
@@ -117,11 +123,12 @@ PATTERNS='eval\(|unserialize\(|shell_exec\(|system\(|md5\(|SELECT .*(\$|\+ *[a-z
 # Only source files are searched, so docs and examples don't cause false alarms.
 EXTS='php|phtml|js|jsx|mjs|cjs|ts|tsx|vue|svelte|py|rb|erb|java|kt|go|cs|cshtml|razor'
 if have rg; then
-  matches=$(rg -n --no-heading -i -g '!node_modules' -g '!vendor' -g '!dist' -g '!build' -g '!*.min.js' \
+  matches=$(rg -n --no-heading -i -g '!node_modules' -g '!vendor' -g '!dist' -g '!build' -g '!.next' -g '!coverage' -g '!*.min.js' \
     -g "*.{${EXTS//|/,}}" -e "$PATTERNS" "$TARGET" 2>/dev/null | head -n 40)
 else
-  matches=$(grep -rniE "$PATTERNS" "$TARGET" 2>/dev/null | grep -E "\.(${EXTS}):[0-9]+:" \
-    | grep -vE '/(node_modules|vendor|dist|build|\.git)/|\.min\.js:' | head -n 40)
+  includes=(); for e in ${EXTS//|/ }; do includes+=(--include="*.$e"); done
+  matches=$(grep -rniE "${includes[@]}" --exclude-dir={node_modules,vendor,dist,build,.git,.next,.nuxt,coverage} \
+    --exclude='*.min.js' "$PATTERNS" "$TARGET" 2>/dev/null | head -n 40)
 fi
 if [ -n "$matches" ]; then
   echo "$matches"
