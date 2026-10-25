@@ -11,7 +11,7 @@
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SK="$ROOT/plugins/shipready/skills"
+SK="$ROOT/plugins/preflightkit/skills"
 
 copy() { # copy <src> <dest>, adding a "generated" note to markdown files
   mkdir -p "$(dirname "$2")"
@@ -44,15 +44,15 @@ copy "$ROOT/docs/database/README.md"             "$SK/preflight/references/datab
 copy "$ROOT/scripts/security-check.sh"           "$SK/preflight/scripts/security-check.sh"
 
 chmod +x "$SK"/*/scripts/*.sh 2>/dev/null || true
-echo "Synced skill references into plugins/shipready/skills/"
+echo "Synced skill references into plugins/preflightkit/skills/"
 
 # Optional: one zip per skill, for upload in claude.ai (Settings > Features).
 if [ "${1:-}" = "--zip" ]; then
   mkdir -p "$ROOT/dist"
   for d in "$SK"/*/; do
     name="$(basename "$d")"
-    rm -f "$ROOT/dist/shipready-$name.zip"
-    ( cd "$SK" && zip -qr "$ROOT/dist/shipready-$name.zip" "$name" )
-    echo "  dist/shipready-$name.zip"
+    rm -f "$ROOT/dist/preflightkit-$name.zip"
+    ( cd "$SK" && zip -qr "$ROOT/dist/preflightkit-$name.zip" "$name" )
+    echo "  dist/preflightkit-$name.zip"
   done
 fi

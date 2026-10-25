@@ -9,4 +9,4 @@ in their second or third language.
 
 Unacceptable behavior includes harassment, personal attacks, and publishing
 others' private information. Report it privately to the maintainers through
-a [private security advisory](https://github.com/parag0508-lang/shipready/security/advisories/new) (title it "Conduct report"). Reports are handled confidentially.
+a [private security advisory](https://github.com/parag0508-lang/preflightkit/security/advisories/new) (title it "Conduct report"). Reports are handled confidentially.

@@ -1,14 +1,14 @@
 {
-  "name": "shipready",
+  "name": "preflightkit",
   "description": "Ship-readiness skills: security review, secure coding guardrails, dependency vetting, AI app security and a pre-deploy preflight check.",
   "owner": {
-    "name": "ShipReady contributors",
-    "url": "https://github.com/parag0508-lang/shipready"
+    "name": "PreflightKit contributors",
+    "url": "https://github.com/parag0508-lang/preflightkit"
   },
   "plugins": [
     {
-      "name": "shipready",
-      "source": "./plugins/shipready",
+      "name": "preflightkit",
+      "source": "./plugins/preflightkit",
       "description": "Check your app is ready to ship: security review, secure-coding guardrails, dependency vetting, AI/LLM app security and a pre-deploy preflight."
     }
   ]

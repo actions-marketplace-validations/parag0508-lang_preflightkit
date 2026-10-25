@@ -22,7 +22,7 @@ warn() { printf '  \033[33m[warn]\033[0m %s\n'  "$1"; WARN=$((WARN+1)); }
 skip() { printf '  \033[90m[skip]\033[0m %s\n'  "$1"; SKIP=$((SKIP+1)); }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-printf '\033[1mShipReady — security self-check\033[0m\n'
+printf '\033[1mPreflightKit — security self-check\033[0m\n'
 printf 'Target: %s\n' "$(cd "$TARGET" && pwd)"
 
 # ---------------------------------------------------------------------------

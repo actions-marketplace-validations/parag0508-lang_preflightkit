@@ -1,4 +1,4 @@
-# ShipReady
+# PreflightKit
 
 **Is your app ready to ship? Check it in 5 minutes.**
 
@@ -8,8 +8,8 @@ you deploy, and it's built with AI-assisted development in mind (Claude, Copilot
 Cursor and others).
 
 ```bash
-git clone https://github.com/parag0508-lang/shipready
-./shipready/scripts/security-check.sh /path/to/your/project
+git clone https://github.com/parag0508-lang/preflightkit
+./preflightkit/scripts/security-check.sh /path/to/your/project
 ```
 
 > **Defensive use only.** Use this toolkit on apps you own or are authorized to
@@ -77,7 +77,7 @@ containers, misconfiguration) · [gitleaks](https://github.com/gitleaks/gitleaks
 
 ## Where this is going
 
-ShipReady is growing into **a ship-readiness kit for production apps**. Security,
+PreflightKit is growing into **a ship-readiness kit for production apps**. Security,
 UI/UX and accessibility, and databases are available now. Performance, design
 systems, deployment and privacy come next, along with ready-made skills for AI
 coding assistants. See the [ROADMAP](./ROADMAP.md) and pick something to help with.

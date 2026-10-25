@@ -7,7 +7,7 @@ don't open a public issue. Examples: the script doing something unsafe, a CI
 workflow that leaks a token, or guidance that would leave apps vulnerable.
 
 - Use GitHub's **"Report a vulnerability"** button (Security tab → Advisories), or
-- Go directly to [github.com/parag0508-lang/shipready/security/advisories/new](https://github.com/parag0508-lang/shipready/security/advisories/new).
+- Go directly to [github.com/parag0508-lang/preflightkit/security/advisories/new](https://github.com/parag0508-lang/preflightkit/security/advisories/new).
 
 We aim to acknowledge reports within 3 days.
 
