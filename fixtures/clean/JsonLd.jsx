@@ -4,6 +4,7 @@ export function JsonLd({ data }) {
     <script
       type="application/ld+json"
       dangerouslySetInnerHTML={{
+        // nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- serialized JSON, "<" escaped
         __html: JSON.stringify(data).replace(/</g, '\\u003c'),
       }}
     />

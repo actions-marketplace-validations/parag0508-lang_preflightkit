@@ -107,7 +107,7 @@ if have gitleaks; then
   else
     gl=(gitleaks detect --source "$TARGET")
   fi
-  gl+=(--no-banner --redact --exit-code 3)
+  gl+=(--no-banner --redact --verbose --exit-code 3)
   [ -f "$TARGET/.gitleaksignore" ] && gl+=(--gitleaks-ignore-path "$TARGET")
   "${gl[@]}"; code=$?
   case $code in
@@ -284,7 +284,8 @@ while IFS= read -r m; do
   if ! grep -qiE "$CODE_PATTERNS" <<<"$text" && grep -qiE "$PLACEHOLDER" <<<"$text"; then
     continue   # hard-coded "secret" that is an obvious placeholder
   fi
-  if [[ "$text" == *dangerouslySetInnerHTML* ]] && ! grep -qiE "$CODE_PATTERNS|$SECRET_PATTERN" <<<"${text//dangerouslySetInnerHTML/}" \
+  lower=$(tr '[:upper:]' '[:lower:]' <<<"$text")
+  if [[ "$lower" == *dangerouslysetinnerhtml* ]] && ! grep -qiE "$CODE_PATTERNS|$SECRET_PATTERN" <<<"${lower//dangerouslysetinnerhtml/}" \
      && sed -n "${n},$((n+2))p" "$TARGET/$file" | grep -q 'JSON\.stringify('; then
     continue   # serialized data, e.g. a JSON-LD <script> tag
   fi
