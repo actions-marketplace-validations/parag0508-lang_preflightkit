@@ -72,5 +72,16 @@ if command -v node >/dev/null 2>&1; then
   check "rules create Copilot and Cursor files" \
     test -f "$rules_tmp/.github/copilot-instructions.md" -a -f "$rules_tmp/.cursor/rules/preflightkit.mdc"
   rm -rf "$rules_tmp"
+
+  # Pre-commit hook: installed once; with gitleaks, a staged secret is refused.
+  repo=$(mktemp -d)
+  ( cd "$repo" && git init -q && git config user.email t@example.com && git config user.name t \
+      && node "$cli" pre-commit >/dev/null && node "$cli" pre-commit >/dev/null )
+  check "pre-commit hook installed once" [ "$(grep -c 'preflightkit:start' "$repo/.git/hooks/pre-commit")" -eq 1 ]
+  if command -v gitleaks >/dev/null 2>&1; then
+    ( cd "$repo" && echo 'API_KEY = "Zq8vR2mN4pL7tY1wK3pQ9"' > leak.py && git add leak.py && git commit -qm leak ) >/dev/null 2>&1
+    check "pre-commit hook refuses a staged secret" [ -z "$(git -C "$repo" log --oneline 2>/dev/null)" ]
+  fi
+  rm -rf "$repo"
 fi
 exit $fail

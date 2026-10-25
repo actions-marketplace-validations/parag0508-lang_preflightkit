@@ -13,6 +13,8 @@ Based on feedback from running PreflightKit on a real Next.js project.
   `npm run deploy` and others) and stops it when something is blocking.
 - **`npx preflightkit rules`** writes the secure-coding rules for AGENTS.md,
   GitHub Copilot, Cursor, Windsurf and CLAUDE.md.
+- **`npx preflightkit pre-commit`** adds a git hook that refuses commits
+  containing secrets (gitleaks on staged changes). Works with Husky.
 - **`npx preflightkit doctor`** shows which scanners are installed and how to
   install the rest.
 - **`--audit-level`** (default `high`) and **`--include-dev`**: dependency

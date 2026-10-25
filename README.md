@@ -29,6 +29,7 @@ npx preflightkit            # scan the current folder
 npx preflightkit doctor     # see which scanners you have, and how to add the rest
 npx preflightkit init       # add the GitHub Actions check to this repo
 npx preflightkit rules      # give your AI assistant the secure-coding rules
+npx preflightkit pre-commit # refuse commits that contain secrets
 ```
 
 **2. Check every push and pull request:** add this step to a GitHub Actions workflow
@@ -115,6 +116,7 @@ comes first.
 | Claude Code runs the deploy | Install the plugin (step 3). Deploy commands are checked first and stopped on blocking findings. |
 | From a GitHub Actions job | Give the deploy job `needs: preflight`. The [workflow template](./templates/preflightkit.yml) has an example. |
 | Your host deploys on merge (Vercel, Netlify, Render, Hostinger...) | Settings → Rules → Rulesets: require the **Ship-readiness security check** status on `main`. |
+| Before code even leaves your machine | `npx preflightkit pre-commit` refuses commits containing secrets (uses gitleaks; works with Husky). |
 | From your own terminal | Run `npx preflightkit` first. It exits non-zero when something blocks, so `npx preflightkit && ./deploy.sh` works. |
 
 ## Use it with any AI coding assistant
