@@ -33,4 +33,29 @@ jobs:
       - uses: parag0508-lang/preflightkit@v1
         with:
           path: .
-          fail-on-warnings: true
+          # findings: fail on leaked secrets, vulnerable dependencies at or above
+          #   audit-level, or a scanner that could not run. Risky code patterns
+          #   and Semgrep results are shown as advisory annotations.
+          # warnings: also fail on advisory findings.  never: report only.
+          fail-on: findings
+          audit-level: high      # low | moderate | high | critical
+          # include-dev: true    # also audit development dependencies
+
+  # Block deploys until the check passes. Pick the one that fits:
+  #
+  # A) You deploy from this workflow: uncomment and fill in the deploy job.
+  #    `needs: preflight` means it only runs when the check above passed.
+  #
+  # deploy:
+  #   needs: preflight
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  #     - run: ./deploy.sh   # your deploy command
+  #
+  # B) Your host deploys on merge (Vercel, Netlify, Render, Hostinger, ...):
+  #    in GitHub, go to Settings > Rules > Rulesets > New branch ruleset, target
+  #    your main branch, turn on "Require status checks to pass" and add
+  #    "Ship-readiness security check". Pull requests can't merge, and so can't
+  #    deploy, until PreflightKit passes.

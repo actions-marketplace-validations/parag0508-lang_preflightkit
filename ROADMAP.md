@@ -50,8 +50,11 @@ retention and deletion requests. This is guidance, not legal advice.
 
 ## Cross-cutting
 - ✅ **Claude skills pack**: security review, secure coding, dependency vetting, AI app security and preflight ([plugins/preflightkit](./plugins/preflightkit/))
-- 📋 The same skills for other assistants (Cursor rules, Copilot instructions, AGENTS.md)
-- ✅ **CLI**: `npx preflightkit` and `npx preflightkit init`
+- ✅ Secure-coding rules for other assistants: `npx preflightkit rules` (AGENTS.md, Copilot, Cursor, Windsurf, CLAUDE.md)
+- ✅ **Deploy gate**: the Claude Code plugin checks the project before Claude deploys
+- 📋 SARIF output, so findings show up in GitHub code scanning
+- 📋 A baseline file, to accept today's findings and fail only on new ones
+- ✅ **CLI**: `npx preflightkit`, `doctor`, `init`, `rules` and `checklist`
 - ✅ **GitHub Action**: `uses: parag0508-lang/preflightkit@v1`
 - 📋 `pipx`, Homebrew and Docker distributions
 - 📋 **Translations**: Hindi, Spanish, Portuguese, Indonesian, French, Japanese

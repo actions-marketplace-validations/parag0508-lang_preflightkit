@@ -7,4 +7,4 @@ def load(data):
 def convert(name):
     subprocess.run("convert " + name + " out.png", shell=True)
 
-API_KEY = "fake-placeholder-not-a-real-key"
+API_KEY = "Zq8vR2mN4pL7tY1wK3"  # made up for this fixture

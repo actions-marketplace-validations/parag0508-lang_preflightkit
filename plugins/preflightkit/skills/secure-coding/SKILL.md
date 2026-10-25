@@ -66,6 +66,12 @@ verification, widen CORS to `*`, remove an auth check, `chmod 777`, or silence
 a validation error, **stop**. Find the real cause, or explain the trade-off to
 the user and let them decide.
 
+The same goes for security scanners: don't add `preflightkit-ignore`,
+`nosemgrep`, `gitleaks:allow` or ignore-file entries, lower an audit level, or
+turn off a CI check to make it pass. Fix the code. If a finding is a genuine
+false positive, show the user why and add a suppression with the reason only
+once they agree.
+
 ## Before you finish
 Re-read what you wrote and check it against the rules above. Briefly tell the
 user about any security decision you made (for example, "added an ownership check

@@ -10,6 +10,30 @@ Five skills that let Claude check your app is ready to ship while you build it.
 | **ai-app-security** | `/preflightkit:ai-app-security` | Security design and review for chatbots, RAG, agents and MCP servers (OWASP Top 10 for LLM Applications) |
 | **preflight** | `/preflightkit:preflight` | GO / NO-GO scorecard before deploying, covering security, UI/UX and accessibility, database, performance and operations |
 
+## Deploy gate (Claude Code)
+
+The plugin also adds a hook that runs before Claude executes a shell command. If
+the command deploys (`vercel --prod`, `netlify deploy --prod`, `fly deploy`,
+`firebase deploy`, `wrangler deploy`, `railway up`, `gcloud ... deploy`,
+`npm run deploy`, `git push` to main or master, and similar), it runs the
+PreflightKit scanner first:
+
+- **Blocking findings:** the deploy is stopped, and Claude is told what to fix.
+- **A scanner could not run:** you're asked before the deploy goes ahead.
+- **Clean:** the deploy runs as normal. A clean result is remembered until the
+  code changes, so repeat deploys don't re-scan.
+
+Other commands pass straight through. To change the behaviour, set an
+environment variable (for example in `.claude/settings.json` under `"env"`):
+
+| Variable | Values |
+|---|---|
+| `PREFLIGHTKIT_DEPLOY_GATE` | `block` (default), `ask` (ask you instead of stopping), `off` |
+| `PREFLIGHTKIT_DEPLOY_ARGS` | Scanner options, e.g. `--audit-level=critical` or `--strict` |
+
+The gate is only as thorough as the scanners installed on your machine. Run
+`npx preflightkit doctor` to see which ones you have.
+
 ## Install
 
 **Claude Code**

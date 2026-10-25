@@ -10,10 +10,22 @@ inputs:
     description: 'Directory to scan, relative to the repository root.'
     required: false
     default: '.'
-  fail-on-warnings:
-    description: 'Fail the job when any check reports a warning ("true" or "false").'
+  fail-on:
+    description: 'When to fail the job: "findings" (secrets, vulnerabilities at or above audit-level, or a scanner that could not run), "warnings" (also advisory findings such as risky code patterns) or "never".'
     required: false
-    default: 'true'
+    default: 'findings'
+  audit-level:
+    description: 'Lowest dependency vulnerability severity that blocks: low, moderate, high or critical. Lower ones are reported as advisory.'
+    required: false
+    default: 'high'
+  include-dev:
+    description: 'Also audit development dependencies ("true" or "false").'
+    required: false
+    default: 'false'
+  fail-on-warnings:
+    description: 'Deprecated: use fail-on. "true" is the same as fail-on: warnings, "false" as fail-on: never.'
+    required: false
+    default: ''
   install-tools:
     description: 'Set up gitleaks, Trivy and Semgrep before scanning ("true" or "false"). Requires a Linux runner.'
     required: false
@@ -33,8 +45,17 @@ inputs:
 
 outputs:
   exit-code:
-    description: '0 when every check passed, 1 when any check reported a warning.'
+    description: '0 when nothing blocks, 1 when a check found something blocking, 2 when a scanner could not run.'
     value: ${{ steps.scan.outputs.exit-code }}
+  blocking:
+    description: 'Number of blocking findings.'
+    value: ${{ steps.scan.outputs.blocking }}
+  warnings:
+    description: 'Number of checks with advisory findings.'
+    value: ${{ steps.scan.outputs.warnings }}
+  errors:
+    description: 'Number of scanners that could not run.'
+    value: ${{ steps.scan.outputs.errors }}
 
 runs:
   using: 'composite'
@@ -83,14 +104,32 @@ runs:
       shell: bash
       env:
         SCAN_PATH: ${{ inputs.path }}
+        FAIL_ON: ${{ inputs.fail-on }}
         FAIL_ON_WARNINGS: ${{ inputs.fail-on-warnings }}
+        AUDIT_LEVEL: ${{ inputs.audit-level }}
+        INCLUDE_DEV: ${{ inputs.include-dev }}
       run: |
         set +e
-        bash "$GITHUB_ACTION_PATH/scripts/security-check.sh" "$SCAN_PATH"
+        case "$FAIL_ON_WARNINGS" in
+          true)  FAIL_ON=warnings; echo "::notice::fail-on-warnings is deprecated. Use fail-on: warnings, or fail-on: findings to fail only on secrets, serious vulnerabilities and scanner errors." ;;
+          false) FAIL_ON=never;    echo "::notice::fail-on-warnings is deprecated. Use fail-on: never." ;;
+        esac
+        case "$FAIL_ON" in
+          findings|warnings|never) ;;
+          *) echo "::error::fail-on must be findings, warnings or never (got \"$FAIL_ON\")."; exit 2 ;;
+        esac
+        args=(--audit-level="$AUDIT_LEVEL")
+        [ "$INCLUDE_DEV" = "true" ] && args+=(--include-dev)
+        [ "$FAIL_ON" = "warnings" ] && args+=(--strict)
+        bash "$GITHUB_ACTION_PATH/scripts/security-check.sh" "${args[@]}" "$SCAN_PATH"
         code=$?
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
-        if [ "$code" -ne 0 ] && [ "$FAIL_ON_WARNINGS" = "true" ]; then
-          echo "::error::PreflightKit found issues. See the job summary and log."
+        if [ "$code" -ne 0 ] && [ "$FAIL_ON" != "never" ]; then
+          if [ "$code" -eq 1 ]; then
+            echo "::error::PreflightKit found blocking issues. See the job summary and log."
+          else
+            echo "::error::A PreflightKit scanner could not run, so part of the check is missing. See the log."
+          fi
           exit "$code"
         fi
         exit 0
