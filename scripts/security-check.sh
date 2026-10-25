@@ -18,7 +18,8 @@ PASS=0; WARN=0; SKIP=0
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 ok()   { printf '  \033[32m[ok]\033[0m   %s\n'  "$1"; PASS=$((PASS+1)); }
-warn() { printf '  \033[33m[warn]\033[0m %s\n'  "$1"; WARN=$((WARN+1)); }
+WARN_MSGS=()
+warn() { printf '  \033[33m[warn]\033[0m %s\n'  "$1"; WARN=$((WARN+1)); WARN_MSGS+=("$1"); }
 skip() { printf '  \033[90m[skip]\033[0m %s\n'  "$1"; SKIP=$((SKIP+1)); }
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -28,13 +29,19 @@ printf 'Target: %s\n' "$(cd "$TARGET" && pwd)"
 # ---------------------------------------------------------------------------
 say "1. Secret scanning (code + git history)"
 if have gitleaks; then
-  if gitleaks detect --source "$TARGET" --no-banner; then
+  # gitleaks 8.19+ uses `git` (repo + history) / `dir` (files only); older versions use `detect`.
+  if gitleaks git --help >/dev/null 2>&1; then
+    if [ -e "$TARGET/.git" ]; then gl=(gitleaks git --no-banner "$TARGET"); else gl=(gitleaks dir --no-banner "$TARGET"); fi
+  else
+    gl=(gitleaks detect --no-banner --source "$TARGET")
+  fi
+  if "${gl[@]}"; then
     ok "gitleaks found no secrets"
   else
     warn "gitleaks flagged potential secrets — review above"
   fi
 elif have trufflehog; then
-  trufflehog filesystem "$TARGET" && ok "trufflehog run complete (review output)"
+  if trufflehog filesystem --fail "$TARGET"; then ok "trufflehog found no secrets"; else warn "trufflehog flagged potential secrets — review above"; fi
 else
   skip "no secret scanner. Install: https://github.com/gitleaks/gitleaks"
 fi
@@ -42,7 +49,7 @@ fi
 # ---------------------------------------------------------------------------
 say "2. Static analysis (code-level flaws)"
 if have semgrep; then
-  if semgrep --config=auto --error "$TARGET"; then
+  if semgrep scan --config=auto --error --no-git-ignore "$TARGET"; then
     ok "semgrep found no blocking issues"
   else
     warn "semgrep flagged issues — review above"
@@ -94,7 +101,11 @@ fi
 # ---------------------------------------------------------------------------
 say "4. Filesystem / container vulnerability scan"
 if have trivy; then
-  trivy fs --scanners vuln,secret,misconfig "$TARGET" && ok "trivy scan complete (review output)"
+  if trivy fs --quiet --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 "$TARGET"; then
+    ok "trivy found no HIGH/CRITICAL issues"
+  else
+    warn "trivy flagged HIGH/CRITICAL vulnerabilities, secrets or misconfigurations — review above"
+  fi
 else
   skip "no trivy. Install: https://aquasecurity.github.io/trivy"
 fi
@@ -103,11 +114,14 @@ fi
 say "5. Quick heuristic grep (dangerous patterns)"
 # One pattern per line, covering PHP, JS/TS, Python, Ruby, Java, Go, C#.
 PATTERNS='eval\(|unserialize\(|shell_exec\(|system\(|md5\(|SELECT .*(\$|\+ *[a-zA-Z_]|#\{|%s'"'"' %)|pickle\.loads|yaml\.load\(|shell=True|new Function\(|dangerouslySetInnerHTML|v-html|html_safe|\.constantize|Marshal\.load|ObjectInputStream|BinaryFormatter|FromSqlRaw\(|text/template|(password|secret|api_?key|token) *[:=] *["'"'"'][^"'"'"']{8,}'
-EXCLUDES='node_modules|vendor|\.git/|dist/|build/|\.min\.js'
+# Only source files are searched, so docs and examples don't cause false alarms.
+EXTS='php|phtml|js|jsx|mjs|cjs|ts|tsx|vue|svelte|py|rb|erb|java|kt|go|cs|cshtml|razor'
 if have rg; then
-  matches=$(rg -n --no-heading -i -g '!node_modules' -g '!vendor' -g '!dist' -g '!build' -g '!*.min.js' -e "$PATTERNS" "$TARGET" 2>/dev/null | head -n 40)
+  matches=$(rg -n --no-heading -i -g '!node_modules' -g '!vendor' -g '!dist' -g '!build' -g '!*.min.js' \
+    -g "*.{${EXTS//|/,}}" -e "$PATTERNS" "$TARGET" 2>/dev/null | head -n 40)
 else
-  matches=$(grep -rniE "$PATTERNS" "$TARGET" 2>/dev/null | grep -vE "$EXCLUDES" | head -n 40)
+  matches=$(grep -rniE "$PATTERNS" "$TARGET" 2>/dev/null | grep -E "\.(${EXTS}):[0-9]+:" \
+    | grep -vE '/(node_modules|vendor|dist|build|\.git)/|\.min\.js:' | head -n 40)
 fi
 if [ -n "$matches" ]; then
   echo "$matches"
@@ -128,6 +142,22 @@ printf '\n\033[1m==> Summary\033[0m\n'
 printf '  ok: %d   warn: %d   skipped: %d\n' "$PASS" "$WARN" "$SKIP"
 printf '\nNext: fix warnings by real risk (internet-facing + critical first).\n'
 printf 'For dynamic scanning of a RUNNING app, use OWASP ZAP separately.\n'
+
+# In GitHub Actions, also write a summary to the run page.
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+  {
+    if [ "$WARN" -gt 0 ]; then echo "## ⚠️ PreflightKit: $WARN warning(s)"; else echo "## ✅ PreflightKit: no warnings"; fi
+    echo
+    echo "| ok | warnings | skipped |"
+    echo "|---|---|---|"
+    echo "| $PASS | $WARN | $SKIP |"
+    if [ "$WARN" -gt 0 ]; then
+      echo; echo "**Review in the job log:**"
+      for m in "${WARN_MSGS[@]}"; do echo "- $m"; done
+    fi
+    echo; echo "Fix by real risk: internet-facing and actively exploited first. [Checklist](https://github.com/parag0508-lang/preflightkit/blob/main/SECURITY-CHECKLIST.md)"
+  } >> "$GITHUB_STEP_SUMMARY"
+fi
 
 # Exit non-zero if anything warned, so CI can gate on it.
 [ "$WARN" -gt 0 ] && exit 1 || exit 0

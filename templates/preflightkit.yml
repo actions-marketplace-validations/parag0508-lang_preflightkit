@@ -1,0 +1,36 @@
+# PreflightKit: security checks on every push and pull request.
+# Copy to .github/workflows/preflightkit.yml, or run: npx preflightkit init
+#
+# Third-party actions are pinned to full commit SHAs, so a moved tag can't
+# change what runs in your pipeline.
+
+name: PreflightKit
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Ship-readiness security check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # full history, so secrets in old commits are caught
+
+      # Optional: set up your language so its native dependency audit runs too.
+      # Trivy already scans dependencies for every ecosystem.
+      # - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      #   with: { node-version: 22 }
+      # - run: npm ci
+
+      - uses: parag0508-lang/preflightkit@v1
+        with:
+          path: .
+          fail-on-warnings: true

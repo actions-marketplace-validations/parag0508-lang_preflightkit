@@ -1,0 +1,44 @@
+{
+  "name": "preflightkit",
+  "version": "0.1.0",
+  "description": "Is your app ready to ship? Security self-check for PHP, Node, Python, Java, Go, Ruby and .NET apps: secrets, vulnerable dependencies and risky code, with a one-command GitHub Actions setup.",
+  "bin": {
+    "preflightkit": "bin/preflightkit.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/security-check.sh",
+    "templates/",
+    "SECURITY-CHECKLIST.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "bash tests/run.sh"
+  },
+  "keywords": [
+    "security",
+    "owasp",
+    "checklist",
+    "devsecops",
+    "secret-scanning",
+    "sast",
+    "dependency-audit",
+    "pre-deploy",
+    "github-actions",
+    "ai-coding"
+  ],
+  "homepage": "https://github.com/parag0508-lang/preflightkit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/parag0508-lang/preflightkit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/parag0508-lang/preflightkit/issues"
+  },
+  "author": "PreflightKit contributors",
+  "license": "MIT"
+}

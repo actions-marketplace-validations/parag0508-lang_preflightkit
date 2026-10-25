@@ -49,9 +49,11 @@ Practical baselines for GDPR, India's DPDP Act, CCPA, cookie consent, data
 retention and deletion requests. This is guidance, not legal advice.
 
 ## Cross-cutting
-- 📋 **AI assistant skills pack**: ready-to-use skills and prompts so Claude and
-  other assistants run these checks while you build
-- 📋 **Installable CLI** (`npx` / `pipx`) so the checker runs with one command
+- ✅ **Claude skills pack**: security review, secure coding, dependency vetting, AI app security and preflight ([plugins/preflightkit](./plugins/preflightkit/))
+- 📋 The same skills for other assistants (Cursor rules, Copilot instructions, AGENTS.md)
+- ✅ **CLI**: `npx preflightkit` and `npx preflightkit init`
+- ✅ **GitHub Action**: `uses: parag0508-lang/preflightkit@v1`
+- 📋 `pipx`, Homebrew and Docker distributions
 - 📋 **Translations**: Hindi, Spanish, Portuguese, Indonesian, French, Japanese
   and others, so developers worldwide can use the toolkit in their own language
 - 📋 A one-page web version of the checklist that you can work through and share

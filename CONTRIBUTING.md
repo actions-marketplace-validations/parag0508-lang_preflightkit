@@ -25,7 +25,8 @@ ones.
 
 ## How to submit
 1. Fork the repo and create a branch: `git checkout -b add-laravel-guide`.
-2. Make your change. If you edited the script, run `bash -n scripts/security-check.sh`.
+2. Make your change. If you edited the docs or the scanner, run `./scripts/sync-plugin.sh`
+   so the Claude skills get the update, then run the tests: `npm test`.
 3. Open a pull request that explains what you changed and why, with sources.
 
 By contributing you agree that your work is licensed under the project's

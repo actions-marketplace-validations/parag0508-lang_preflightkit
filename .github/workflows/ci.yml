@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Repo checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Shell syntax and lint
+        run: |
+          for f in scripts/*.sh tests/*.sh; do bash -n "$f"; done
+          shellcheck -S warning scripts/*.sh tests/*.sh
+      - name: Skill references are in sync with docs
+        run: |
+          ./scripts/sync-plugin.sh
+          git diff --exit-code -- plugins/ || { echo "::error::Run ./scripts/sync-plugin.sh and commit the result."; exit 1; }
+      - name: Internal links resolve
+        run: |
+          python3 - <<'PY'
+          import re, os, glob, sys
+          bad = []
+          for f in glob.glob('**/*.md', recursive=True):
+              if f.startswith(('plugins/', 'node_modules/')):
+                  continue
+              for link in re.findall(r'\]\((\.{1,2}/[^)#\s]+)', open(f, encoding='utf-8').read()):
+                  if not os.path.exists(os.path.normpath(os.path.join(os.path.dirname(f), link))):
+                      bad.append(f"{f} -> {link}")
+          print("\n".join(bad) or "All internal links OK")
+          sys.exit(1 if bad else 0)
+          PY
+      - name: CLI smoke test
+        run: |
+          node bin/preflightkit.js --version
+          node bin/preflightkit.js --help
+          cd "$(mktemp -d)" && node "$GITHUB_WORKSPACE/bin/preflightkit.js" init
+          test -f .github/workflows/preflightkit.yml
+
+  action:
+    name: Action self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Scan intentionally vulnerable fixture
+        id: vulnerable
+        uses: ./
+        with:
+          path: fixtures/vulnerable
+          fail-on-warnings: false
+      - name: Scan clean fixture
+        id: clean
+        uses: ./
+        with:
+          path: fixtures/clean
+          install-tools: false   # tools are already set up by the previous step
+          fail-on-warnings: false
+      - name: Check results
+        env:
+          VULN: ${{ steps.vulnerable.outputs.exit-code }}
+          CLEAN: ${{ steps.clean.outputs.exit-code }}
+        run: |
+          echo "vulnerable=$VULN clean=$CLEAN"
+          [ "$VULN" = "1" ] || { echo "::error::Vulnerable fixture was not flagged"; exit 1; }
+          [ "$CLEAN" = "0" ] || { echo "::error::Clean fixture was flagged"; exit 1; }
+          bash tests/run.sh

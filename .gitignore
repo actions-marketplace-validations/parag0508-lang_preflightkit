@@ -21,3 +21,4 @@ semgrep.*
 .idea/
 .vscode/
 dist/
+*.tgz

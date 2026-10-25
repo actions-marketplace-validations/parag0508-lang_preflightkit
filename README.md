@@ -2,11 +2,35 @@
 
 **Is your app ready to ship? Check it in 5 minutes.**
 
-A free, open checklist and scanner kit that catches the security mistakes
-attackers actually exploit. It works with every major framework, before and after
-you deploy, and it's built with AI-assisted development in mind (Claude, Copilot,
-Cursor and others).
+A free, open toolkit that catches the security mistakes attackers actually
+exploit, plus the UX, accessibility and database gaps that break launches. It
+works with every major framework, before and after you deploy, and it's built for
+apps written with AI assistants (Claude, Copilot, Cursor and others).
 
+## Quick start: pick one
+
+**1. Check a project now** (Node 18+; uses bash, so on Windows run it in Git Bash or WSL)
+```bash
+npx preflightkit            # scan the current folder
+npx preflightkit init       # add the GitHub Actions check to this repo
+```
+
+**2. Check every push and pull request:** add this step to a GitHub Actions workflow
+```yaml
+- uses: parag0508-lang/preflightkit@v1
+```
+It sets up gitleaks, Semgrep and Trivy, scans, and writes a summary on the run
+page. See the [full workflow](./templates/preflightkit.yml).
+
+**3. Let Claude check as you build** (Claude Code)
+```
+/plugin install preflightkit --marketplace parag0508-lang/preflightkit
+```
+Then ask for `/preflightkit:security-review` or `/preflightkit:preflight`.
+[More about the skills](./plugins/preflightkit/), including how to use them in
+the Claude apps.
+
+**4. No install:** clone the repo and run the script
 ```bash
 git clone https://github.com/parag0508-lang/preflightkit
 ./preflightkit/scripts/security-check.sh /path/to/your/project
@@ -37,13 +61,14 @@ dependencies. This toolkit helps you close that list systematically.
 | | What it does | Start here |
 |---|---|---|
 | ✅ **Checklist** | Pre- and post-deploy checks mapped to the OWASP Top 10 | [SECURITY-CHECKLIST.md](./SECURITY-CHECKLIST.md) |
-| 🧩 **Framework guides** | Top risks, the fix in code, and a copy-paste self-check for 8 stacks | [docs/security/](./docs/security/) |
+| 🧩 **Framework guides** | Top risks, the fix in code, and a copy-paste self-check for 8 stacks plus AI/LLM apps | [docs/security/](./docs/security/) |
 | 🤖 **AI-built apps** | What to review when an assistant wrote the code | [ai-assisted-development.md](./docs/ai-assisted-development.md) |
 | 🧠 **AI/LLM app security** | Prompt injection, agent and tool permissions, RAG data leaks (OWASP LLM Top 10) | [ai-llm-apps.md](./docs/security/ai-llm-apps.md) |
 | ♿ **UI/UX & accessibility** | WCAG 2.2 AA, UX states, motion, Core Web Vitals | [docs/ux-accessibility/](./docs/ux-accessibility/) |
 | 🗄️ **Database** | Exposure, least privilege, tested backups, safe migrations, performance | [docs/database/](./docs/database/) |
-| ⚡ **Self-check script** | Runs free scanners and flags dangerous patterns across 7 languages | [scripts/security-check.sh](./scripts/security-check.sh) |
-| 🔁 **CI workflow** | Scans every push and pull request automatically | [security-scan.yml](./.github/workflows/security-scan.yml) |
+| ⚡ **Scanner + CLI** | Runs free scanners and flags dangerous patterns across 7 languages | `npx preflightkit` · [script](./scripts/security-check.sh) |
+| 🔁 **GitHub Action** | Checks every push and pull request, with a summary on the run page | [action.yml](./action.yml) · [workflow](./templates/preflightkit.yml) |
+| 🤖 **Claude skills** | Security review, secure-coding guardrails, dependency vetting, AI app security, GO/NO-GO preflight | [plugins/preflightkit/](./plugins/preflightkit/) |
 
 ### Supported stacks
 
@@ -55,10 +80,10 @@ Python (Django, Flask, FastAPI) · Java (Spring Boot) · Go · Ruby on Rails ·
 
 ## Use it in 3 steps
 
-1. **Run the script** on your project. It detects your stack and runs whichever
-   free scanners you have installed. It tells you what to install for the rest.
+1. **Run the check** (`npx preflightkit`). It detects your stack and runs whichever
+   free scanners you have installed, and tells you what to install for the rest.
 2. **Walk the checklist** once and fix anything you can't tick.
-3. **Copy the CI workflow** into `.github/workflows/` so every future change gets
+3. **Turn on the Action** (`npx preflightkit init`) so every future change is
    checked automatically.
 
 Fix by real risk, not alphabetically: anything internet-facing that appears in

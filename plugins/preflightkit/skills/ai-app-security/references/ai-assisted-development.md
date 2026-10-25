@@ -101,7 +101,7 @@ pipeline you'd run on human-written code:
 - Dynamic scanning on a running instance (OWASP ZAP)
 
 See [`../scripts/security-check.sh`](../scripts/security-check.sh) and the
-[CI workflow](../.github/workflows/security-scan.yml) — wire them in so every
+[GitHub Action workflow](../templates/preflightkit.yml) — wire them in so every
 change, AI-written or not, gets checked automatically.
 
 ---

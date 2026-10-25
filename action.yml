@@ -1,0 +1,96 @@
+name: 'PreflightKit Security Check'
+description: 'Is your app ready to ship? Scans for leaked secrets, vulnerable dependencies and risky code in PHP, Node, Python, Java, Go, Ruby and .NET.'
+author: 'PreflightKit contributors'
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  path:
+    description: 'Directory to scan, relative to the repository root.'
+    required: false
+    default: '.'
+  fail-on-warnings:
+    description: 'Fail the job when any check reports a warning ("true" or "false").'
+    required: false
+    default: 'true'
+  install-tools:
+    description: 'Set up gitleaks, Trivy and Semgrep before scanning ("true" or "false"). Requires a Linux runner.'
+    required: false
+    default: 'true'
+  gitleaks-version:
+    description: 'gitleaks Docker image tag.'
+    required: false
+    default: 'v8.30.1'
+  trivy-version:
+    description: 'Trivy Docker image tag.'
+    required: false
+    default: '0.76.1'
+  semgrep-version:
+    description: 'Semgrep version installed from PyPI.'
+    required: false
+    default: '1.182.1'
+
+outputs:
+  exit-code:
+    description: '0 when every check passed, 1 when any check reported a warning.'
+    value: ${{ steps.scan.outputs.exit-code }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up scanners
+      if: ${{ inputs.install-tools == 'true' }}
+      shell: bash
+      env:
+        GITLEAKS_VERSION: ${{ inputs.gitleaks-version }}
+        TRIVY_VERSION: ${{ inputs.trivy-version }}
+        SEMGREP_VERSION: ${{ inputs.semgrep-version }}
+      run: |
+        set -euo pipefail
+        if [ "$RUNNER_OS" != "Linux" ] || ! command -v docker >/dev/null 2>&1; then
+          echo "::warning::PreflightKit installs scanners on Linux runners only. Other checks still run."
+          exit 0
+        fi
+        bin="$RUNNER_TEMP/preflightkit-bin"
+        mkdir -p "$bin" "$RUNNER_TEMP/trivy-cache"
+
+        # gitleaks and Trivy run from their official, version-pinned images.
+        # The workspace is mounted at the same path and the runner's user ID is
+        # used, so file paths and git ownership checks work unchanged.
+        cat > "$bin/gitleaks" <<EOF
+        #!/usr/bin/env bash
+        exec docker run --rm --user "\$(id -u):\$(id -g)" \
+          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -w "\$PWD" \
+          "zricethezav/gitleaks:$GITLEAKS_VERSION" "\$@"
+        EOF
+        cat > "$bin/trivy" <<EOF
+        #!/usr/bin/env bash
+        exec docker run --rm --user "\$(id -u):\$(id -g)" \
+          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -w "\$PWD" \
+          -v "$RUNNER_TEMP/trivy-cache:/cache" -e TRIVY_CACHE_DIR=/cache \
+          "aquasec/trivy:$TRIVY_VERSION" "\$@"
+        EOF
+        chmod +x "$bin/gitleaks" "$bin/trivy"
+        echo "$bin" >> "$GITHUB_PATH"
+        docker pull -q "zricethezav/gitleaks:$GITLEAKS_VERSION" >/dev/null
+        docker pull -q "aquasec/trivy:$TRIVY_VERSION" >/dev/null
+
+        pipx install --quiet "semgrep==$SEMGREP_VERSION"
+
+    - name: Run PreflightKit
+      id: scan
+      shell: bash
+      env:
+        SCAN_PATH: ${{ inputs.path }}
+        FAIL_ON_WARNINGS: ${{ inputs.fail-on-warnings }}
+      run: |
+        set +e
+        bash "$GITHUB_ACTION_PATH/scripts/security-check.sh" "$SCAN_PATH"
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        if [ "$code" -ne 0 ] && [ "$FAIL_ON_WARNINGS" = "true" ]; then
+          echo "::error::PreflightKit found issues. See the job summary and log."
+          exit "$code"
+        fi
+        exit 0
