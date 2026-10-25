@@ -9,7 +9,7 @@ for needle in "search.php" "pickle.loads" "shell=True" "dangerouslySetInnerHTML"
   grep -q "$needle" /tmp/pk-vuln.log && echo "PASS   found: $needle" || { echo "FAIL   missed: $needle"; fail=1; }
 done
 if command -v semgrep >/dev/null 2>&1; then
-  grep -qE "Targets scanned: [1-9]" /tmp/pk-vuln.log && echo "PASS semgrep scanned the fixture files" || { echo "FAIL semgrep scanned 0 files"; fail=1; }
+  grep -qE "python\.lang\.security|typescript\.react\.security|php\.lang\.security" /tmp/pk-vuln.log && echo "PASS semgrep reported its own findings" || { echo "FAIL semgrep reported nothing"; fail=1; }
 fi
 bash scripts/security-check.sh fixtures/clean >/tmp/pk-clean.log 2>&1
 [ $? -eq 0 ] && echo "PASS clean fixture passes" || { echo "FAIL clean fixture was flagged"; cat /tmp/pk-clean.log; fail=1; }

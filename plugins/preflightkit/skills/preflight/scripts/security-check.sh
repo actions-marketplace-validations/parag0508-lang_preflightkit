@@ -23,6 +23,24 @@ warn() { printf '  \033[33m[warn]\033[0m %s\n'  "$1"; WARN=$((WARN+1)); WARN_MSG
 skip() { printf '  \033[90m[skip]\033[0m %s\n'  "$1"; SKIP=$((SKIP+1)); }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Every external scanner runs under a time limit so one slow tool can't hang the
+# whole check. Override with PREFLIGHTKIT_TIMEOUT=<seconds> (default 300).
+STEP_TIMEOUT="${PREFLIGHTKIT_TIMEOUT:-300}"
+if have timeout; then TO=(timeout "$STEP_TIMEOUT"); elif have gtimeout; then TO=(gtimeout "$STEP_TIMEOUT"); else TO=(); fi
+# run_tool <name> <command...>: returns 0 clean, 1 findings, 2 tool failed, 3 timed out.
+run_tool() {
+  local rc; "${TO[@]}" "${@:2}"; rc=$?
+  case $rc in 0) return 0 ;; 124) return 3 ;; 1) return 1 ;; *) return 2 ;; esac
+}
+verdict() { # verdict <name> <rc> <ok-message> <findings-message>
+  case "$2" in
+    0) ok "$3" ;;
+    1) warn "$4" ;;
+    3) warn "$1 timed out after ${STEP_TIMEOUT}s. Run it on a smaller folder, or raise PREFLIGHTKIT_TIMEOUT." ;;
+    *) warn "$1 failed to run (see its error above). This is not a finding, but the check did not complete." ;;
+  esac
+}
+
 printf '\033[1mPreflightKit — security self-check\033[0m\n'
 printf 'Target: %s\n' "$(cd "$TARGET" && pwd)"
 
@@ -35,13 +53,11 @@ if have gitleaks; then
   else
     gl=(gitleaks detect --no-banner --redact --source "$TARGET")
   fi
-  if "${gl[@]}"; then
-    ok "gitleaks found no secrets"
-  else
-    warn "gitleaks flagged potential secrets — review above"
-  fi
+  run_tool gitleaks "${gl[@]}"; rc=$?
+  verdict gitleaks "$rc" "gitleaks found no secrets" "gitleaks flagged potential secrets — review above"
 elif have trufflehog; then
-  if trufflehog filesystem --fail "$TARGET"; then ok "trufflehog found no secrets"; else warn "trufflehog flagged potential secrets — review above"; fi
+  run_tool trufflehog trufflehog filesystem --fail "$TARGET"; rc=$?
+  verdict trufflehog "$rc" "trufflehog found no secrets" "trufflehog flagged potential secrets — review above"
 else
   skip "no secret scanner. Install: https://github.com/gitleaks/gitleaks"
 fi
@@ -49,13 +65,12 @@ fi
 # ---------------------------------------------------------------------------
 say "2. Static analysis (code-level flaws)"
 if have semgrep; then
-  if semgrep scan --config=auto --error --no-git-ignore "$TARGET"; then
-    ok "semgrep found no blocking issues"
-  else
-    warn "semgrep flagged issues — review above"
-  fi
+  # Explicit rulesets: unlike --config=auto they also work with metrics turned off.
+  run_tool semgrep semgrep scan --config p/default --config p/security-audit --metrics=off \
+    --error --no-git-ignore --quiet "$TARGET"; rc=$?
+  verdict semgrep "$rc" "semgrep found no blocking issues" "semgrep flagged issues — review above"
 else
-  skip "no semgrep. Install: pip install semgrep  (then: semgrep --config=auto)"
+  skip "no semgrep. Install: pip install semgrep  (then: semgrep --config p/default)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -101,17 +116,16 @@ fi
 # ---------------------------------------------------------------------------
 say "4. Filesystem / container vulnerability scan"
 if have trivy; then
-  # Local .env files are expected to hold secrets and should be gitignored;
-  # committed secrets are caught by gitleaks above. Skipping them avoids false
-  # alarms and keeps real credentials out of the output.
-  if trivy fs --quiet --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 \
-      --skip-dirs "**/node_modules" --skip-dirs "**/.git" --skip-dirs "**/.next" \
-      --skip-files "**/.env" --skip-files "**/.env.local" --skip-files "**/.env.*.local" \
-      "$TARGET"; then
-    ok "trivy found no HIGH/CRITICAL issues"
-  else
-    warn "trivy flagged HIGH/CRITICAL vulnerabilities, secrets or misconfigurations — review above"
-  fi
+  # Secrets are covered by gitleaks (step 1, with git history), so Trivy only checks
+  # dependencies and misconfiguration here. Its own secret scanner reads every file
+  # and is very slow on big folders. Local .env files and dependency folders are skipped.
+  run_tool trivy trivy fs --quiet --skip-version-check --scanners vuln,misconfig \
+    --severity HIGH,CRITICAL --exit-code 1 \
+    --skip-dirs "**/node_modules" --skip-dirs "**/.git" --skip-dirs "**/.next" \
+    --skip-dirs "**/dist" --skip-dirs "**/build" --skip-dirs "**/vendor" \
+    --skip-files "**/.env" --skip-files "**/.env.local" --skip-files "**/.env.*.local" \
+    "$TARGET"; rc=$?
+  verdict trivy "$rc" "trivy found no HIGH/CRITICAL issues" "trivy flagged HIGH/CRITICAL vulnerabilities or misconfigurations — review above"
 else
   skip "no trivy. Install: https://aquasecurity.github.io/trivy"
 fi
