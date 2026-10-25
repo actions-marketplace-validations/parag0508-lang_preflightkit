@@ -1,6 +1,6 @@
 {
   "name": "preflightkit",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Is your app ready to ship? Security self-check for PHP, Node, Python, Java, Go, Ruby and .NET apps: secrets, vulnerable dependencies and risky code, with a one-command GitHub Actions setup.",
   "bin": {
     "preflightkit": "bin/preflightkit.js"

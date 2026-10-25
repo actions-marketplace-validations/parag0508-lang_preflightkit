@@ -1,6 +1,6 @@
 {
   "name": "preflightkit",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Check your app is ready to ship: security review, secure-coding guardrails, dependency vetting, AI/LLM app security and a pre-deploy preflight.",
   "author": {
     "name": "PreflightKit contributors",
