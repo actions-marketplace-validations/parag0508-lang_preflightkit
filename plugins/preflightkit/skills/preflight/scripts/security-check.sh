@@ -10,6 +10,7 @@
 #                        high (default) or critical
 #   --include-dev        also audit development dependencies
 #   --strict             treat advisory findings as blocking too
+#   --sarif-dir=DIR      also write SARIF reports (for GitHub code scanning) to DIR
 #
 # Every result is one of:
 #   [fail]   blocking: leaked secrets, vulnerable dependencies at or above the
@@ -33,12 +34,13 @@
 
 set -uo pipefail
 
-TARGET=.; AUDIT_LEVEL=high; INCLUDE_DEV=""; PROD_ONLY=1; STRICT=0
+TARGET=.; AUDIT_LEVEL=high; INCLUDE_DEV=""; PROD_ONLY=1; STRICT=0; SARIF_DIR=""
 for arg in "$@"; do
   case "$arg" in
     --audit-level=*) AUDIT_LEVEL="${arg#*=}" ;;
     --include-dev)   INCLUDE_DEV=1; PROD_ONLY="" ;;
     --strict)        STRICT=1 ;;
+    --sarif-dir=*)   SARIF_DIR="${arg#*=}" ;;
     -h|--help)       awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     -*)              echo "security-check.sh: unknown option $arg (see --help)" >&2; exit 2 ;;
     *)               TARGET="$arg" ;;
@@ -52,6 +54,10 @@ case "$AUDIT_LEVEL" in
   critical) SEVERITIES='critical';                          TRIVY_SEVERITY=CRITICAL ;;
   *) echo "security-check.sh: --audit-level must be low, moderate, high or critical" >&2; exit 2 ;;
 esac
+if [ -n "$SARIF_DIR" ]; then
+  mkdir -p "$SARIF_DIR" && SARIF_DIR="$(cd "$SARIF_DIR" && pwd)" || { echo "security-check.sh: cannot create $SARIF_DIR" >&2; exit 2; }
+  sarif_results=""
+fi
 [ -d "$TARGET" ] || { echo "security-check.sh: \"$TARGET\" is not a folder" >&2; exit 2; }
 
 PASS=0; FAIL=0; WARN=0; ERR=0; SKIP=0
@@ -64,6 +70,11 @@ annotate() { # annotate <warning|error> <message> [file line]
   if [ $# -ge 4 ]; then echo "::$1 file=$3,line=$4,title=PreflightKit::$msg"; else echo "::$1 title=PreflightKit::$msg"; fi
 }
 
+json_escape() { # json_escape <text>: the text as the inside of a JSON string
+  local s="$1"
+  s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\t'/\\t}"; s="${s//$'\r'/}"; s="${s//$'\n'/\\n}"
+  printf '%s' "$s"
+}
 say()   { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 ok()    { printf '  \033[32m[ok]\033[0m    %s\n' "$1"; PASS=$((PASS+1)); }
 fail()  { printf '  \033[31m[fail]\033[0m  %s\n' "$1"; FAIL=$((FAIL+1)); FAIL_MSGS+=("$1"); annotate error "$1"; }
@@ -113,6 +124,7 @@ if have gitleaks; then
     gl=(gitleaks detect --source "$TARGET")
   fi
   gl+=(--no-banner --redact --verbose --exit-code 3)
+  [ -n "$SARIF_DIR" ] && gl+=(--report-format sarif --report-path "$SARIF_DIR/gitleaks.sarif")
   [ -f "$TARGET/.gitleaksignore" ] && gl+=(--gitleaks-ignore-path "$TARGET")
   "${gl[@]}"; code=$?
   case $code in
@@ -134,8 +146,10 @@ fi
 # ---------------------------------------------------------------------------
 say "2. Static analysis (code-level flaws)"
 if have semgrep; then
-  excludes=(); for p in ${IGNORES[@]+"${IGNORES[@]}"}; do excludes+=(--exclude "$p"); done
-  semgrep scan --config=auto --error --no-git-ignore ${excludes[@]+"${excludes[@]}"} "$TARGET"; code=$?
+  sg_args=(); for p in ${IGNORES[@]+"${IGNORES[@]}"}; do sg_args+=(--exclude "$p"); done
+  [ -n "$SARIF_DIR" ] && sg_args+=(--sarif-output="$SARIF_DIR/semgrep.sarif")
+  # PYTHONUTF8: on Windows, Semgrep otherwise writes reports in the ANSI code page and crashes.
+  PYTHONUTF8=1 semgrep scan --config=auto --error --no-git-ignore ${sg_args[@]+"${sg_args[@]}"} "$TARGET"; code=$?
   case $code in
     0) ok "semgrep found no issues" ;;
     1) warn "semgrep flagged issues — review above (accept a reviewed one with a nosemgrep comment)" ;;
@@ -273,6 +287,8 @@ if have trivy; then
   [ -n "$INCLUDE_DEV" ] && tv+=(--include-dev-deps)
   [ -f "$TARGET/.trivyignore" ] && tv+=(--ignorefile "$TARGET/.trivyignore")
   "${tv[@]}" "$TARGET"; code=$?
+  # Trivy writes one format per run; the second run reuses the downloaded database.
+  [ -n "$SARIF_DIR" ] && "${tv[@]}" --format sarif --output "$SARIF_DIR/trivy.sarif" --exit-code 0 "$TARGET" >/dev/null 2>&1
   case $code in
     0) ok "trivy found no $TRIVY_SEVERITY issues" ;;
     3) fail "trivy found $TRIVY_SEVERITY vulnerabilities, secrets or misconfigurations — review above (accept one in .trivyignore)" ;;
@@ -319,11 +335,16 @@ while IFS= read -r m; do
     continue   # serialized data, e.g. a JSON-LD <script> tag
   fi
   kept=$((kept+1))
+  # Report paths are relative to the repository root.
+  apath="${TARGET%/}/$file"; apath="${apath#"${GITHUB_WORKSPACE:-}/"}"; apath="${apath#./}"
+  trimmed="${text#"${text%%[![:space:]]*}"}"
   if [ "$kept" -le 40 ]; then
     shown+="$file:$n:$text"$'\n'
-    # Annotation paths are relative to the repository root.
-    apath="${TARGET%/}/$file"; apath="${apath#"${GITHUB_WORKSPACE:-}/"}"; apath="${apath#./}"
-    [ "$kept" -le 10 ] && annotate warning "Risky pattern: ${text#"${text%%[![:space:]]*}"}" "$apath" "$n"
+    [ "$kept" -le 10 ] && annotate warning "Risky pattern: $trimmed" "$apath" "$n"
+  fi
+  if [ -n "$SARIF_DIR" ]; then
+    rule=risky-pattern; grep -qiE "$CODE_PATTERNS" <<<"$text" || rule=hardcoded-secret
+    sarif_results+="${sarif_results:+,}{\"ruleId\":\"$rule\",\"level\":\"warning\",\"message\":{\"text\":\"$(json_escape "Risky pattern: $trimmed")\"},\"locations\":[{\"physicalLocation\":{\"artifactLocation\":{\"uri\":\"$(json_escape "$apath")\"},\"region\":{\"startLine\":$n}}}]}"
   fi
 done <<<"$raw"
 [ "$ignored" -gt 0 ] && echo "  ($ignored match(es) accepted via preflightkit-ignore or .preflightkitignore)"
@@ -333,6 +354,14 @@ if [ "$kept" -gt 0 ]; then
   warn "$kept risky pattern(s) above — review them; accept a safe one with a preflightkit-ignore comment"
 else
   ok "no obvious dangerous patterns"
+fi
+if [ -n "$SARIF_DIR" ]; then
+  cat > "$SARIF_DIR/preflightkit.sarif" <<EOF
+{"version":"2.1.0","\$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"PreflightKit","informationUri":"https://github.com/parag0508-lang/preflightkit","rules":[
+{"id":"risky-pattern","name":"RiskyPattern","shortDescription":{"text":"Risky code pattern"},"fullDescription":{"text":"A call or construct that is often exploitable (eval, shell=True, raw SQL, unsafe deserialization, raw HTML). Check that no untrusted input reaches it."},"helpUri":"https://github.com/parag0508-lang/preflightkit/blob/main/SECURITY-CHECKLIST.md","defaultConfiguration":{"level":"warning"}},
+{"id":"hardcoded-secret","name":"HardcodedSecret","shortDescription":{"text":"Possible hard-coded secret"},"fullDescription":{"text":"A password, token or API key assigned in code. Move it to an environment variable or secrets manager, and rotate it if it is real."},"helpUri":"https://github.com/parag0508-lang/preflightkit/blob/main/SECURITY-CHECKLIST.md","defaultConfiguration":{"level":"warning"}}
+]}},"results":[$sarif_results]}]}
+EOF
 fi
 
 # ---------------------------------------------------------------------------

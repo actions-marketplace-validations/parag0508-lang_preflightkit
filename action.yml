@@ -22,6 +22,10 @@ inputs:
     description: 'Also audit development dependencies ("true" or "false").'
     required: false
     default: 'false'
+  upload-sarif:
+    description: 'Upload findings to GitHub code scanning (the Security tab and pull request alerts). Needs "security-events: write" permission; private repositories need GitHub Code Security.'
+    required: false
+    default: 'false'
   fail-on-warnings:
     description: 'Deprecated: use fail-on. "true" is the same as fail-on: warnings, "false" as fail-on: never.'
     required: false
@@ -56,6 +60,9 @@ outputs:
   errors:
     description: 'Number of scanners that could not run.'
     value: ${{ steps.scan.outputs.errors }}
+  sarif-dir:
+    description: 'Folder with the SARIF reports, when upload-sarif is "true".'
+    value: ${{ steps.scan.outputs.sarif-dir }}
 
 runs:
   using: 'composite'
@@ -77,18 +84,19 @@ runs:
         mkdir -p "$bin" "$RUNNER_TEMP/trivy-cache"
 
         # gitleaks and Trivy run from their official, version-pinned images.
-        # The workspace is mounted at the same path and the runner's user ID is
-        # used, so file paths and git ownership checks work unchanged.
+        # The workspace and runner temp folder are mounted at the same paths and
+        # the runner's user ID is used, so file paths, reports and git ownership
+        # checks work unchanged.
         cat > "$bin/gitleaks" <<EOF
         #!/usr/bin/env bash
         exec docker run --rm --user "\$(id -u):\$(id -g)" \
-          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -w "\$PWD" \
+          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -v "$RUNNER_TEMP:$RUNNER_TEMP" -w "\$PWD" \
           "zricethezav/gitleaks:$GITLEAKS_VERSION" "\$@"
         EOF
         cat > "$bin/trivy" <<EOF
         #!/usr/bin/env bash
         exec docker run --rm --user "\$(id -u):\$(id -g)" \
-          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -w "\$PWD" \
+          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -v "$RUNNER_TEMP:$RUNNER_TEMP" -w "\$PWD" \
           -v "$RUNNER_TEMP/trivy-cache:/cache" -e TRIVY_CACHE_DIR=/cache \
           "aquasec/trivy:$TRIVY_VERSION" "\$@"
         EOF
@@ -108,6 +116,7 @@ runs:
         FAIL_ON_WARNINGS: ${{ inputs.fail-on-warnings }}
         AUDIT_LEVEL: ${{ inputs.audit-level }}
         INCLUDE_DEV: ${{ inputs.include-dev }}
+        UPLOAD_SARIF: ${{ inputs.upload-sarif }}
       run: |
         set +e
         case "$FAIL_ON_WARNINGS" in
@@ -121,15 +130,37 @@ runs:
         args=(--audit-level="$AUDIT_LEVEL")
         [ "$INCLUDE_DEV" = "true" ] && args+=(--include-dev)
         [ "$FAIL_ON" = "warnings" ] && args+=(--strict)
+        if [ "$UPLOAD_SARIF" = "true" ]; then
+          sarif="$RUNNER_TEMP/preflightkit-sarif"
+          args+=(--sarif-dir="$sarif")
+          echo "sarif-dir=$sarif" >> "$GITHUB_OUTPUT"
+        fi
         bash "$GITHUB_ACTION_PATH/scripts/security-check.sh" "${args[@]}" "$SCAN_PATH"
         code=$?
-        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
-        if [ "$code" -ne 0 ] && [ "$FAIL_ON" != "never" ]; then
-          if [ "$code" -eq 1 ]; then
+        { echo "exit-code=$code"; echo "fail-on=$FAIL_ON"; } >> "$GITHUB_OUTPUT"
+        exit 0
+
+    # Findings go to code scanning even when the check fails, so they're visible
+    # where the failure is. A repository without code scanning only gets a warning.
+    - name: Upload to GitHub code scanning
+      if: ${{ always() && inputs.upload-sarif == 'true' && steps.scan.outputs.sarif-dir != '' }}
+      continue-on-error: true
+      uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-dir }}
+        category: preflightkit
+
+    - name: Check result
+      shell: bash
+      env:
+        CODE: ${{ steps.scan.outputs.exit-code }}
+        FAIL_ON: ${{ steps.scan.outputs.fail-on }}
+      run: |
+        if [ "${CODE:-0}" -ne 0 ] && [ "$FAIL_ON" != "never" ]; then
+          if [ "$CODE" -eq 1 ]; then
             echo "::error::PreflightKit found blocking issues. See the job summary and log."
           else
             echo "::error::A PreflightKit scanner could not run, so part of the check is missing. See the log."
           fi
-          exit "$code"
+          exit "$CODE"
         fi
-        exit 0

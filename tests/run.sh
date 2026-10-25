@@ -31,6 +31,19 @@ done
 bash scripts/security-check.sh --audit-level=bogus fixtures/clean >/dev/null 2>&1
 check "bad option exits with 2" [ $? -eq 2 ]
 
+# SARIF: every report written is valid JSON with the PreflightKit run in it.
+sarif_tmp=$(mktemp -d)
+bash scripts/security-check.sh --sarif-dir="$sarif_tmp" fixtures/vulnerable >/dev/null 2>&1
+check "SARIF report written" test -s "$sarif_tmp/preflightkit.sarif"
+if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+  py=$(command -v python3 || command -v python)
+  for f in "$sarif_tmp"/*.sarif; do
+    check "  valid SARIF: $(basename "$f")" "$py" -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); assert d["runs"][0]["tool"]["driver"]["name"]' "$f"
+  done
+  check "  pattern findings in SARIF" "$py" -c 'import json,sys; assert len(json.load(open(sys.argv[1],encoding="utf-8"))["runs"][0]["results"]) == 5' "$sarif_tmp/preflightkit.sarif"
+fi
+rm -rf "$sarif_tmp"
+
 # Monorepo: every folder with a lockfile is audited; dependencies, tests and
 # ignored paths are not. A stand-in npm reports vulnerabilities in apps/web only.
 mono=$(mktemp -d)

@@ -162,6 +162,7 @@ audit, labelled with its path.
 | `--audit-level=LEVEL` | `audit-level` | `high` | Lowest dependency severity that blocks: `low`, `moderate`, `high`, `critical` |
 | `--include-dev` | `include-dev` | off | Also audit development dependencies (production only by default) |
 | `--strict` | `fail-on: warnings` | off | Advisory findings block too |
+| `--sarif-dir=DIR` | `upload-sarif: true` | off | Write SARIF reports; the action uploads them to GitHub code scanning (needs `security-events: write`) |
 | | `fail-on` | `findings` | `findings`, `warnings` or `never` (report only) |
 
 `fail-on-warnings` from earlier versions still works but is deprecated:

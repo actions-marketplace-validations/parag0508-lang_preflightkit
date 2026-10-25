@@ -40,6 +40,8 @@ jobs:
           fail-on: findings
           audit-level: high      # low | moderate | high | critical
           # include-dev: true    # also audit development dependencies
+          # upload-sarif: true   # show findings in the Security tab and on pull requests;
+          #                      # also add `security-events: write` under permissions above
 
   # Block deploys until the check passes. Pick the one that fits:
   #

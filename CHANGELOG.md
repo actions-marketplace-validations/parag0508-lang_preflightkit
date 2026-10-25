@@ -23,6 +23,9 @@ Based on feedback from running PreflightKit on a real Next.js project.
 - **Accepting reviewed findings:** a `preflightkit-ignore` comment on or above
   the line, or paths in `.preflightkitignore`. `.gitleaksignore` and
   `.trivyignore` in the project folder are picked up too.
+- **GitHub code scanning.** `upload-sarif: true` on the action (or
+  `--sarif-dir` on the script) sends gitleaks, Semgrep, Trivy and pattern
+  findings to the Security tab and pull request alerts.
 - **Pull request annotations** for risky lines, and `blocking`, `warnings` and
   `errors` outputs on the GitHub Action.
 - Action inputs `fail-on` (`findings`, `warnings`, `never`), `audit-level`
