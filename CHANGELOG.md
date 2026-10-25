@@ -5,6 +5,9 @@
 Based on feedback from running PreflightKit on a real Next.js project.
 
 ### Added
+- **Monorepo support.** Every folder with a lockfile or manifest, up to three
+  levels down (`apps/web`, `packages/api`, ...), gets its own dependency audit.
+  `node_modules`, tests and paths in `.preflightkitignore` are skipped.
 - **Deploy gate for Claude Code.** The plugin checks the project before Claude
   runs a deploy command (`vercel --prod`, `git push` to main, `fly deploy`,
   `npm run deploy` and others) and stops it when something is blocking.

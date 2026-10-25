@@ -31,6 +31,21 @@ done
 bash scripts/security-check.sh --audit-level=bogus fixtures/clean >/dev/null 2>&1
 check "bad option exits with 2" [ $? -eq 2 ]
 
+# Monorepo: every folder with a lockfile is audited; dependencies, tests and
+# ignored paths are not. A stand-in npm reports vulnerabilities in apps/web only.
+mono=$(mktemp -d)
+mkdir -p "$mono/bin" "$mono/p/apps/web" "$mono/p/apps/docs" "$mono/p/node_modules/x" "$mono/p/tests/x" "$mono/p/old"
+for d in . apps/web apps/docs node_modules/x tests/x old; do echo '{}' > "$mono/p/$d/package-lock.json"; done
+echo 'old' > "$mono/p/.preflightkitignore"
+printf '#!/usr/bin/env bash\ncase "$PWD" in *apps/web) echo "1 vulnerability (1 high)"; exit 1 ;; esac\necho "found 0 vulnerabilities"\n' > "$mono/bin/npm"
+chmod +x "$mono/bin/npm"
+PATH="$mono/bin:$PATH" bash scripts/security-check.sh "$mono/p" >/tmp/pk-mono.log 2>&1
+code=$?
+check "monorepo: blocking finding in a sub-app fails" [ "$code" -eq 1 ]
+check "  apps/web is audited and flagged" grep -q 'npm audit (apps/web) found high' /tmp/pk-mono.log
+check "  root and apps/docs are audited" grep -q 'Auditing 3 folders: . apps/docs apps/web' /tmp/pk-mono.log
+rm -rf "$mono"
+
 # Deploy gate hook: feed it Claude Code's PreToolUse input.
 gate() { # gate <project> <command> [scanner options] -> prints the hook's output
   printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$2" \

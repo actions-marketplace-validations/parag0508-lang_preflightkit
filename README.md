@@ -151,6 +151,10 @@ Every result is one of three kinds, so a noisy heuristic can't block a release:
 
 Exit codes: `0` nothing blocking, `1` blocking findings, `2` a scanner could not run.
 
+**Monorepos** work out of the box: every folder with a lockfile or manifest, up
+to three levels down (`apps/web`, `packages/api`...), gets its own dependency
+audit, labelled with its path.
+
 | CLI option | Action input | Default | Meaning |
 |---|---|---|---|
 | `--audit-level=LEVEL` | `audit-level` | `high` | Lowest dependency severity that blocks: `low`, `moderate`, `high`, `critical` |

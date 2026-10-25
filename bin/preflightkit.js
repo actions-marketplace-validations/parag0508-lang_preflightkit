@@ -151,6 +151,22 @@ const AUDITORS = [
   { marker: ['.csproj', '.sln'], cmd: 'dotnet', name: 'dotnet vulnerable-package check', install: 'https://dot.net' },
 ];
 
+// File names in the project, 3 folders deep, skipping the same folders the
+// scanner skips. Monorepos keep lockfiles in apps/* and packages/*.
+const SKIP_DIRS = new Set(['node_modules', 'vendor', 'dist', 'build', '.git', '.next', '.nuxt', 'coverage',
+  '__tests__', '__mocks__', 'test', 'tests', 'spec', 'e2e', 'fixtures', '.venv', 'venv']);
+function projectFiles(dir, depth = 0) {
+  const names = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (depth < 3 && !SKIP_DIRS.has(entry.name)) names.push(...projectFiles(path.join(dir, entry.name), depth + 1));
+    } else {
+      names.push(entry.name);
+    }
+  }
+  return names;
+}
+
 function doctor(target) {
   const dir = folder(target);
   if (!dir) return 2;
@@ -169,7 +185,7 @@ function doctor(target) {
     row(Boolean(found), s.cmd, found ? s.what : `${s.what}\n${' '.repeat(25)}install: ${s.install[PLATFORM]}`);
   }
 
-  const files = fs.readdirSync(dir);
+  const files = projectFiles(dir);
   const auditors = AUDITORS.filter((a) => a.marker.some((m) =>
     m.startsWith('.') ? files.some((f) => f.endsWith(m)) : files.includes(m)));
   console.log('\nDependency auditors for this project:');

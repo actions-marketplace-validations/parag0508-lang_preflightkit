@@ -92,6 +92,11 @@ is_ignored() { # is_ignored <path relative to the project root>
   return 1
 }
 
+# Build output, dependencies and tests are skipped: tests are full of fake
+# secrets and deliberate bad input.
+SKIP_DIRS='node_modules vendor dist build .git .next .nuxt coverage __tests__ __mocks__ test tests spec e2e'
+SKIP_FILES='*.min.js *.test.* *.spec.* test_*.py *_test.py *_test.go'
+
 printf '\033[1mPreflightKit — security self-check\033[0m\n'
 printf 'Target: %s\n' "$(cd "$TARGET" && pwd)"
 printf 'Dependency audit level: %s%s\n' "$AUDIT_LEVEL" "${PROD_ONLY:+ (production dependencies only)}"
@@ -144,9 +149,9 @@ fi
 say "3. Dependency audit (known-vulnerable packages)"
 ran_dep=0
 
-# run_audit <command...>: run it in the project folder and print its output.
+# run_audit <command...>: run it in $AUDIT_DIR and print its output.
 # Leaves the output in $out and the exit code in $code.
-run_audit() { ran_dep=1; out=$(cd "$TARGET" && "$@" 2>&1); code=$?; printf '%s\n' "$out"; }
+run_audit() { ran_dep=1; out=$(cd "$AUDIT_DIR" && "$@" 2>&1); code=$?; printf '%s\n' "$out"; }
 
 # result <name> <error-regex> <clean-regex>: classify the last run of an
 # auditor that filters by the audit level itself and exits non-zero on a match.
@@ -166,61 +171,88 @@ severity_result() {
   fi
 }
 
-if [ -f "$TARGET/composer.lock" ] && have composer; then
-  run_audit composer audit --locked ${PROD_ONLY:+--no-dev}
-  case $code in   # bit 1: vulnerable packages, bit 2: abandoned packages
-    0)   ok "composer audit clean" ;;
-    1|3) severity_result "composer audit" 'Severity[ |]+' ;;
-    2)   warn "composer audit found abandoned packages — review above" ;;
-    *)   error "composer audit could not run — see the error above. Nothing was audited." ;;
-  esac
-fi
-if [ -f "$TARGET/package-lock.json" ] && have npm; then
-  run_audit npm audit --audit-level="$AUDIT_LEVEL" ${PROD_ONLY:+--omit=dev}
-  result "npm audit" '^npm (ERR!|error) ' 'found 0 vulnerabilities'
-fi
-if [ -f "$TARGET/pnpm-lock.yaml" ] && have pnpm; then
-  run_audit pnpm audit --audit-level "$AUDIT_LEVEL" ${PROD_ONLY:+--prod}
-  result "pnpm audit" 'ERR_PNPM_' 'No known vulnerabilities found'
-fi
-if [ -f "$TARGET/yarn.lock" ] && have yarn; then
-  if [[ "$( cd "$TARGET" && yarn --version 2>/dev/null )" == 1.* ]]; then
-    run_audit yarn audit --level "$AUDIT_LEVEL" ${PROD_ONLY:+--groups dependencies}
-    result "yarn audit" '^error ' '^0 vulnerabilities found'
-  else
-    run_audit yarn npm audit --recursive --severity "$AUDIT_LEVEL" ${PROD_ONLY:+--environment production}
-    result "yarn npm audit" 'Usage Error|Internal Error|YN0001' 'No audit suggestions'
+# audit_dir <folder relative to the project>: run every auditor that applies there.
+audit_dir() {
+  local at=""; [ "$1" = "." ] || at=" ($1)"
+  AUDIT_DIR="$TARGET/$1"
+  if [ -f "$AUDIT_DIR/composer.lock" ] && have composer; then
+    run_audit composer audit --locked ${PROD_ONLY:+--no-dev}
+    case $code in   # bit 1: vulnerable packages, bit 2: abandoned packages
+      0)   ok "composer audit$at clean" ;;
+      1|3) severity_result "composer audit$at" 'Severity[ |]+' ;;
+      2)   warn "composer audit$at found abandoned packages — review above" ;;
+      *)   error "composer audit$at could not run — see the error above. Nothing was audited." ;;
+    esac
   fi
-fi
-if { [ -f "$TARGET/requirements.txt" ] || [ -f "$TARGET/pyproject.toml" ]; } && have pip-audit; then
-  if [ -f "$TARGET/requirements.txt" ]; then run_audit pip-audit -r requirements.txt; else run_audit pip-audit .; fi
-  if [ "$code" -eq 0 ]; then ok "pip-audit clean"
-  elif grep -qE 'Found [0-9]+ known vulnerabilit' <<<"$out"; then fail "pip-audit found known vulnerabilities (it reports no severity, so all of them block)"
-  else error "pip-audit could not run — see the error above. Nothing was audited."
+  if [ -f "$AUDIT_DIR/package-lock.json" ] && have npm; then
+    run_audit npm audit --audit-level="$AUDIT_LEVEL" ${PROD_ONLY:+--omit=dev}
+    result "npm audit$at" '^npm (ERR!|error) ' 'found 0 vulnerabilities'
   fi
-fi
-if [ -f "$TARGET/go.mod" ] && have govulncheck; then
-  run_audit govulncheck ./...
-  case $code in
-    0) ok "govulncheck clean" ;;
-    3) fail "govulncheck found vulnerabilities your code actually calls" ;;
-    *) error "govulncheck could not run — see the error above. Nothing was audited." ;;
-  esac
-fi
-if [ -f "$TARGET/Gemfile.lock" ] && have bundle-audit; then
-  run_audit bundle-audit check --update
-  if [ "$code" -eq 0 ]; then ok "bundle-audit clean"
-  elif grep -q 'Vulnerabilities found' <<<"$out"; then severity_result "bundle-audit" 'Criticality: '
-  else error "bundle-audit could not run — see the error above. Nothing was audited."
+  if [ -f "$AUDIT_DIR/pnpm-lock.yaml" ] && have pnpm; then
+    run_audit pnpm audit --audit-level "$AUDIT_LEVEL" ${PROD_ONLY:+--prod}
+    result "pnpm audit$at" 'ERR_PNPM_' 'No known vulnerabilities found'
   fi
-fi
-if ls "$TARGET"/*.csproj "$TARGET"/*.sln >/dev/null 2>&1 && have dotnet; then
-  run_audit dotnet list package --vulnerable --include-transitive
-  if [ "$code" -ne 0 ]; then error "dotnet package check could not run — see the error above. Nothing was audited."
-  elif grep -q "has the following vulnerable packages" <<<"$out"; then severity_result "dotnet package check" '^ *>.* '
-  else ok "dotnet package check clean"
+  if [ -f "$AUDIT_DIR/yarn.lock" ] && have yarn; then
+    if [[ "$( cd "$AUDIT_DIR" && yarn --version 2>/dev/null )" == 1.* ]]; then
+      run_audit yarn audit --level "$AUDIT_LEVEL" ${PROD_ONLY:+--groups dependencies}
+      result "yarn audit$at" '^error ' '^0 vulnerabilities found'
+    else
+      run_audit yarn npm audit --recursive --severity "$AUDIT_LEVEL" ${PROD_ONLY:+--environment production}
+      result "yarn npm audit$at" 'Usage Error|Internal Error|YN0001' 'No audit suggestions'
+    fi
   fi
+  if { [ -f "$AUDIT_DIR/requirements.txt" ] || [ -f "$AUDIT_DIR/pyproject.toml" ]; } && have pip-audit; then
+    if [ -f "$AUDIT_DIR/requirements.txt" ]; then run_audit pip-audit -r requirements.txt; else run_audit pip-audit .; fi
+    if [ "$code" -eq 0 ]; then ok "pip-audit$at clean"
+    elif grep -qE 'Found [0-9]+ known vulnerabilit' <<<"$out"; then fail "pip-audit$at found known vulnerabilities (it reports no severity, so all of them block)"
+    else error "pip-audit$at could not run — see the error above. Nothing was audited."
+    fi
+  fi
+  if [ -f "$AUDIT_DIR/go.mod" ] && have govulncheck; then
+    run_audit govulncheck ./...
+    case $code in
+      0) ok "govulncheck$at clean" ;;
+      3) fail "govulncheck$at found vulnerabilities your code actually calls" ;;
+      *) error "govulncheck$at could not run — see the error above. Nothing was audited." ;;
+    esac
+  fi
+  if [ -f "$AUDIT_DIR/Gemfile.lock" ] && have bundle-audit; then
+    run_audit bundle-audit check --update
+    if [ "$code" -eq 0 ]; then ok "bundle-audit$at clean"
+    elif grep -q 'Vulnerabilities found' <<<"$out"; then severity_result "bundle-audit$at" 'Criticality: '
+    else error "bundle-audit$at could not run — see the error above. Nothing was audited."
+    fi
+  fi
+  if ls "$AUDIT_DIR"/*.csproj "$AUDIT_DIR"/*.sln >/dev/null 2>&1 && have dotnet; then
+    run_audit dotnet list package --vulnerable --include-transitive
+    if [ "$code" -ne 0 ]; then error "dotnet package check$at could not run — see the error above. Nothing was audited."
+    elif grep -q "has the following vulnerable packages" <<<"$out"; then severity_result "dotnet package check$at" '^ *>.* '
+    else ok "dotnet package check$at clean"
+    fi
+  fi
+}
+
+# Every folder with a lockfile or manifest, up to 3 levels down, so monorepos
+# (apps/web, packages/api, services/*) are covered. A workspace with one root
+# lockfile is audited once, at the root.
+MANIFESTS='package-lock.json pnpm-lock.yaml yarn.lock composer.lock requirements.txt pyproject.toml go.mod Gemfile.lock *.csproj *.sln'
+set -f
+names=(); for m in $MANIFESTS; do names+=(-o -name "$m"); done
+prune=(); for d in $SKIP_DIRS fixtures .venv venv; do prune+=(-o -name "$d"); done
+set +f
+dep_dirs=()
+while IFS= read -r d; do
+  d="${d#./}"; [ -n "$d" ] || d="."
+  [ "$d" != "." ] && is_ignored "$d" && continue
+  dep_dirs+=("$d")
+done < <(cd "$TARGET" && find . -maxdepth 4 \( "${prune[@]:1}" \) -prune -o -type f \( "${names[@]:1}" \) -print 2>/dev/null \
+           | sed 's|/[^/]*$||' | sort -u)
+if [ ${#dep_dirs[@]} -gt 25 ]; then
+  echo "  ${#dep_dirs[@]} folders with dependencies found; auditing the first 25. Skip the rest in .preflightkitignore."
+  dep_dirs=("${dep_dirs[@]:0:25}")
 fi
+[ ${#dep_dirs[@]} -gt 1 ] && echo "  Auditing ${#dep_dirs[@]} folders: ${dep_dirs[*]}"
+for d in ${dep_dirs[@]+"${dep_dirs[@]}"}; do audit_dir "$d"; done
 if { [ -f "$TARGET/pom.xml" ] || [ -f "$TARGET/build.gradle" ] || [ -f "$TARGET/build.gradle.kts" ]; }; then
   echo "  Java project detected: dependency CVEs are covered by the Trivy step below,"
   echo "  or run: mvn org.owasp:dependency-check-maven:check"
@@ -257,10 +289,7 @@ CODE_PATTERNS='eval\(|unserialize\(|shell_exec\(|system\(|md5\(|SELECT .*(\$|\+ 
 SECRET_PATTERN='(password|secret|api_?key|token) *[:=] *["'"'"'][^"'"'"']{8,}'
 PLACEHOLDER='test|fake|dummy|example|sample|placeholder|changeme|xxxx|your[_-]'
 # Only source files are searched, so docs and examples don't cause false alarms.
-# Tests are skipped too: they're full of fake secrets and deliberate bad input.
 EXTS='php|phtml|js|jsx|mjs|cjs|ts|tsx|vue|svelte|py|rb|erb|java|kt|go|cs|cshtml|razor'
-SKIP_DIRS='node_modules vendor dist build .git .next .nuxt coverage __tests__ __mocks__ test tests spec e2e'
-SKIP_FILES='*.min.js *.test.* *.spec.* test_*.py *_test.py *_test.go'
 if have rg; then
   globs=(-g "*.{${EXTS//|/,}}"); for d in $SKIP_DIRS; do globs+=(-g "!$d"); done
   set -f; for f in $SKIP_FILES; do globs+=(-g "!$f"); done; set +f
