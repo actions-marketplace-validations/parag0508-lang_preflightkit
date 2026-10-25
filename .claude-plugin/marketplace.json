@@ -1,0 +1,15 @@
+{
+  "name": "shipready",
+  "description": "Ship-readiness skills: security review, secure coding guardrails, dependency vetting, AI app security and a pre-deploy preflight check.",
+  "owner": {
+    "name": "ShipReady contributors",
+    "url": "https://github.com/parag0508-lang/shipready"
+  },
+  "plugins": [
+    {
+      "name": "shipready",
+      "source": "./plugins/shipready",
+      "description": "Check your app is ready to ship: security review, secure-coding guardrails, dependency vetting, AI/LLM app security and a pre-deploy preflight."
+    }
+  ]
+}

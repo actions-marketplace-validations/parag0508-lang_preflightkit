@@ -20,3 +20,4 @@ semgrep.*
 *.swp
 .idea/
 .vscode/
+dist/
