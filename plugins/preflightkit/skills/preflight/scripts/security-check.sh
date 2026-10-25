@@ -26,11 +26,11 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # Every external scanner runs under a time limit so one slow tool can't hang the
 # whole check. Override with PREFLIGHTKIT_TIMEOUT=<seconds> (default 300).
 STEP_TIMEOUT="${PREFLIGHTKIT_TIMEOUT:-300}"
-if have timeout; then TO=(timeout "$STEP_TIMEOUT"); elif have gtimeout; then TO=(gtimeout "$STEP_TIMEOUT"); else TO=(); fi
+if have timeout; then TO=(timeout -k 10 "$STEP_TIMEOUT"); elif have gtimeout; then TO=(gtimeout -k 10 "$STEP_TIMEOUT"); else TO=(); fi
 # run_tool <name> <command...>: returns 0 clean, 1 findings, 2 tool failed, 3 timed out.
 run_tool() {
   local rc; "${TO[@]}" "${@:2}"; rc=$?
-  case $rc in 0) return 0 ;; 124) return 3 ;; 1) return 1 ;; *) return 2 ;; esac
+  case $rc in 0) return 0 ;; 124|137) return 3 ;; 1) return 1 ;; *) return 2 ;; esac
 }
 verdict() { # verdict <name> <rc> <ok-message> <findings-message>
   case "$2" in
