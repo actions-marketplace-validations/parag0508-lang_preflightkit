@@ -1,5 +1,5 @@
 name: 'PreflightKit Security Check'
-description: 'Is your app ready to ship? Scans for leaked secrets, vulnerable dependencies and risky code in PHP, Node, Python, Java, Go, Ruby and .NET.'
+description: 'Find leaked secrets, vulnerable dependencies and risky code before you ship. Works with PHP, Node, Python, Java, Go, .NET.'
 author: 'PreflightKit contributors'
 branding:
   icon: 'shield'
