@@ -76,30 +76,37 @@ fi
 # ---------------------------------------------------------------------------
 say "3. Dependency audit (known-vulnerable packages)"
 ran_dep=0
+# audit <name> <ok-message> <findings-message> <command...>: runs in $TARGET under the time limit.
+audit() {
+  local name=$1 okm=$2 wm=$3 rc; shift 3
+  ran_dep=1
+  ( cd "$TARGET" && run_tool "$name" "$@" ); rc=$?
+  verdict "$name" "$rc" "$okm" "$wm"
+}
 if [ -f "$TARGET/composer.lock" ] && have composer; then
-  ran_dep=1; ( cd "$TARGET" && composer audit ) && ok "composer audit clean" || warn "composer audit flagged packages"
+  audit composer "composer audit clean" "composer audit flagged packages" composer audit
 fi
 if [ -f "$TARGET/package-lock.json" ] && have npm; then
-  ran_dep=1; ( cd "$TARGET" && npm audit ) && ok "npm audit clean" || warn "npm audit flagged packages"
+  audit npm "npm audit clean" "npm audit flagged packages" npm audit
 fi
 if [ -f "$TARGET/pnpm-lock.yaml" ] && have pnpm; then
-  ran_dep=1; ( cd "$TARGET" && pnpm audit ) && ok "pnpm audit clean" || warn "pnpm audit flagged packages"
+  audit pnpm "pnpm audit clean" "pnpm audit flagged packages" pnpm audit
 fi
 if [ -f "$TARGET/yarn.lock" ] && have yarn; then
-  ran_dep=1; ( cd "$TARGET" && yarn npm audit 2>/dev/null || yarn audit ) && ok "yarn audit clean" || warn "yarn audit flagged packages"
+  audit yarn "yarn audit clean" "yarn audit flagged packages" bash -c 'yarn npm audit 2>/dev/null || yarn audit'
 fi
 if { [ -f "$TARGET/requirements.txt" ] || [ -f "$TARGET/pyproject.toml" ]; } && have pip-audit; then
-  ran_dep=1; ( cd "$TARGET" && pip-audit ) && ok "pip-audit clean" || warn "pip-audit flagged packages"
+  audit pip-audit "pip-audit clean" "pip-audit flagged packages" pip-audit
 fi
 if [ -f "$TARGET/go.mod" ] && have govulncheck; then
-  ran_dep=1; ( cd "$TARGET" && govulncheck ./... ) && ok "govulncheck clean" || warn "govulncheck flagged reachable vulnerabilities"
+  audit govulncheck "govulncheck clean" "govulncheck flagged reachable vulnerabilities" govulncheck ./...
 fi
 if [ -f "$TARGET/Gemfile.lock" ] && have bundle-audit; then
-  ran_dep=1; ( cd "$TARGET" && bundle-audit check --update ) && ok "bundle-audit clean" || warn "bundle-audit flagged gems"
+  audit bundle-audit "bundle-audit clean" "bundle-audit flagged gems" bundle-audit check --update
 fi
 if ls "$TARGET"/*.csproj "$TARGET"/*.sln >/dev/null 2>&1 && have dotnet; then
   ran_dep=1
-  out=$( cd "$TARGET" && dotnet list package --vulnerable --include-transitive 2>&1 )
+  out=$( cd "$TARGET" && "${TO[@]}" dotnet list package --vulnerable --include-transitive 2>&1 )
   echo "$out"
   if echo "$out" | grep -q "has the following vulnerable packages"; then
     warn "dotnet flagged vulnerable packages"
@@ -137,11 +144,11 @@ PATTERNS='eval\(|unserialize\(|shell_exec\(|system\(|md5\(|SELECT .*(\$|\+ *[a-z
 # Only source files are searched, so docs and examples don't cause false alarms.
 EXTS='php|phtml|js|jsx|mjs|cjs|ts|tsx|vue|svelte|py|rb|erb|java|kt|go|cs|cshtml|razor'
 if have rg; then
-  matches=$(rg -n --no-heading -i -g '!node_modules' -g '!vendor' -g '!dist' -g '!build' -g '!.next' -g '!coverage' -g '!*.min.js' \
+  matches=$("${TO[@]}" rg -n --no-heading -i -g '!node_modules' -g '!vendor' -g '!dist' -g '!build' -g '!.next' -g '!coverage' -g '!*.min.js' \
     -g "*.{${EXTS//|/,}}" -e "$PATTERNS" "$TARGET" 2>/dev/null | head -n 40)
 else
   includes=(); for e in ${EXTS//|/ }; do includes+=(--include="*.$e"); done
-  matches=$(grep -rniE "${includes[@]}" --exclude-dir={node_modules,vendor,dist,build,.git,.next,.nuxt,coverage} \
+  matches=$("${TO[@]}" grep -rniE "${includes[@]}" --exclude-dir={node_modules,vendor,dist,build,.git,.next,.nuxt,coverage} \
     --exclude='*.min.js' "$PATTERNS" "$TARGET" 2>/dev/null | head -n 40)
 fi
 if [ -n "$matches" ]; then
