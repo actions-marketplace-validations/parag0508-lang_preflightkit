@@ -1,0 +1,22 @@
+# Never commit secrets or local env
+.env
+.env.*
+*.pem
+*.key
+secrets.*
+
+# Dependencies
+/vendor/
+/node_modules/
+__pycache__/
+
+# Scanner output
+*.sarif
+trivy-results.*
+semgrep.*
+
+# OS / editor noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
