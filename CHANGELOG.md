@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.1
+
+The npm package for 1.1.0 was built before these scanner changes were merged.
+1.1.1 ships them:
+- Every external tool runs under a time limit (`PREFLIGHTKIT_TIMEOUT`,
+  default 300 seconds). A timeout is reported as "didn't finish", not as a
+  finding.
+- Semgrep uses the `p/default` and `p/security-audit` rule sets with metrics
+  turned off.
+- Trivy checks dependencies and misconfiguration only (gitleaks covers
+  secrets), and skips `dist`, `build` and `vendor`.
+
 ## 1.1.0
 
 Based on feedback from running PreflightKit on a real Next.js project.
