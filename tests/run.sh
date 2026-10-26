@@ -4,8 +4,12 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 fail=0
 check() { # check <description> <command...>
-  if "${@:2}"; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi
+  if "${@:2}"; then echo "PASS $1"; else echo "FAIL $1"; fail=1
+    [ "${GITHUB_ACTIONS:-}" = "true" ] && echo "::error title=Test failed::$1"; fi
 }
+# Temp projects live under RUNNER_TEMP in CI: the containerized scanners can't
+# see the rest of the runner's /tmp.
+tmpdir() { mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/pk-test.XXXXXX"; }
 
 bash scripts/security-check.sh --strict fixtures/vulnerable >/tmp/pk-vuln.log 2>&1
 code=$?
@@ -32,7 +36,7 @@ bash scripts/security-check.sh --audit-level=bogus fixtures/clean >/dev/null 2>&
 check "bad option exits with 2" [ $? -eq 2 ]
 
 # SARIF: every report written is valid JSON with the PreflightKit run in it.
-sarif_tmp=$(mktemp -d)
+sarif_tmp=$(tmpdir)
 bash scripts/security-check.sh --sarif-dir="$sarif_tmp" fixtures/vulnerable >/dev/null 2>&1
 check "SARIF report written" test -s "$sarif_tmp/preflightkit.sarif"
 if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
@@ -45,7 +49,7 @@ fi
 rm -rf "$sarif_tmp"
 
 # Baseline: accept today's findings, then only new ones are reported.
-bl=$(mktemp -d); cp fixtures/vulnerable/* "$bl/"
+bl=$(tmpdir); cp fixtures/vulnerable/* "$bl/"
 # A git repo, as in real projects: Semgrep's baseline is a commit.
 ( cd "$bl" && git init -q && git add -A && git -c user.email=t@example.com -c user.name=t commit -qm init )
 bash scripts/security-check.sh --write-baseline "$bl" >/dev/null 2>&1
@@ -61,7 +65,7 @@ rm -rf "$bl"
 
 # Monorepo: every folder with a lockfile is audited; dependencies, tests and
 # ignored paths are not. A stand-in npm reports vulnerabilities in apps/web only.
-mono=$(mktemp -d)
+mono=$(tmpdir)
 mkdir -p "$mono/bin" "$mono/p/apps/web" "$mono/p/apps/docs" "$mono/p/node_modules/x" "$mono/p/tests/x" "$mono/p/old"
 for d in . apps/web apps/docs node_modules/x tests/x old; do echo '{}' > "$mono/p/$d/package-lock.json"; done
 echo 'old' > "$mono/p/.preflightkitignore"
@@ -80,7 +84,7 @@ gate() { # gate <project> <command> [scanner options] -> prints the hook's outpu
     | CLAUDE_PROJECT_DIR="$1" PREFLIGHTKIT_DEPLOY_ARGS="${3:-}" TMPDIR="$gate_tmp" \
       bash plugins/preflightkit/hooks/deploy-gate.sh
 }
-gate_tmp=$(mktemp -d)
+gate_tmp=$(tmpdir)
 for c in "ls -la" "npm run build" "git push origin feature/login"; do
   check "gate ignores: $c" [ -z "$(gate fixtures/vulnerable "$c" --strict)" ]
 done
@@ -93,7 +97,7 @@ rm -rf "$gate_tmp"
 
 # AI assistant rules: written once, then left alone on a re-run.
 if command -v node >/dev/null 2>&1; then
-  cli="$PWD/bin/preflightkit.js"; rules_tmp=$(mktemp -d)
+  cli="$PWD/bin/preflightkit.js"; rules_tmp=$(tmpdir)
   ( cd "$rules_tmp" && printf '# Notes\n' > AGENTS.md && node "$cli" rules >/dev/null && node "$cli" rules >/dev/null )
   check "rules keep existing AGENTS.md content" grep -q '^# Notes' "$rules_tmp/AGENTS.md"
   check "rules add one managed section" [ "$(grep -c 'preflightkit:start' "$rules_tmp/AGENTS.md")" -eq 1 ]
@@ -102,7 +106,7 @@ if command -v node >/dev/null 2>&1; then
   rm -rf "$rules_tmp"
 
   # Pre-commit hook: installed once; with gitleaks, a staged secret is refused.
-  repo=$(mktemp -d)
+  repo=$(tmpdir)
   ( cd "$repo" && git init -q && git config user.email t@example.com && git config user.name t \
       && node "$cli" pre-commit >/dev/null && node "$cli" pre-commit >/dev/null )
   check "pre-commit hook installed once" [ "$(grep -c 'preflightkit:start' "$repo/.git/hooks/pre-commit")" -eq 1 ]
