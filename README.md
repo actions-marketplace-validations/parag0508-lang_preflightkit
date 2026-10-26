@@ -52,8 +52,12 @@ page and annotates risky lines in the pull request. See the
 
 **3. Let Claude check as you build** (Claude Code)
 ```
-/plugin install preflightkit --marketplace parag0508-lang/preflightkit
+/plugin marketplace add parag0508-lang/preflightkit
+/plugin install preflightkit@preflightkit
 ```
+In a terminal, or if your editor doesn't offer `/plugin` (for example the VS Code
+extension), run the same as `claude plugin marketplace add parag0508-lang/preflightkit`
+and `claude plugin install preflightkit@preflightkit`, then restart Claude Code.
 Then ask for `/preflightkit:security-review` or `/preflightkit:preflight`.
 From then on, deploy commands Claude runs are checked first.
 [More about the skills](./plugins/preflightkit/), including how to use them in
