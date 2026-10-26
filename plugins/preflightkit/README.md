@@ -38,13 +38,18 @@ The gate is only as thorough as the scanners installed on your machine. Run
 
 **Claude Code**
 ```
-/plugin install preflightkit --marketplace parag0508-lang/preflightkit
-```
-Or in two steps:
-```
 /plugin marketplace add parag0508-lang/preflightkit
 /plugin install preflightkit@preflightkit
 ```
+From a terminal (also where `/plugin` isn't available, such as the VS Code
+extension):
+```
+claude plugin marketplace add parag0508-lang/preflightkit
+claude plugin install preflightkit@preflightkit
+```
+Restart Claude Code afterwards. Add `--scope project` to both commands to
+install it for everyone working on a repository (it's saved in
+`.claude/settings.json`).
 
 **Claude apps (claude.ai and desktop):** download a skill's zip from the
 [Releases](https://github.com/parag0508-lang/preflightkit/releases) page, or build
