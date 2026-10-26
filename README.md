@@ -30,6 +30,7 @@ npx preflightkit doctor     # see which scanners you have, and how to add the re
 npx preflightkit init       # add the GitHub Actions check to this repo
 npx preflightkit rules      # give your AI assistant the secure-coding rules
 npx preflightkit pre-commit # refuse commits that contain secrets
+npx preflightkit baseline   # accept today's findings; report only new ones
 ```
 
 **2. Check every push and pull request:** add this step to a GitHub Actions workflow
@@ -167,6 +168,13 @@ audit, labelled with its path.
 
 `fail-on-warnings` from earlier versions still works but is deprecated:
 `true` means `fail-on: warnings`, `false` means `fail-on: never`.
+
+**Adopting it on an existing codebase.** Run `npx preflightkit baseline` once
+and commit `.preflightkit-baseline`. Every current finding is accepted, and from
+then on only new ones are reported, even in strict mode. It covers gitleaks,
+Semgrep (needs git history: keep `fetch-depth: 0`), Trivy and the pattern check.
+Dependency audits aren't baselined: use `--audit-level`, or fix them. Delete a
+line from the file to report that finding again; `--no-baseline` ignores it.
 
 **Accepting a reviewed finding.** The pattern check skips test files (`*.test.*`,
 `*.spec.*`, `tests/`, `__tests__/` and similar), obvious placeholder secrets, and

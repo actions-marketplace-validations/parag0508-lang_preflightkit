@@ -26,6 +26,10 @@ Based on feedback from running PreflightKit on a real Next.js project.
 - **GitHub code scanning.** `upload-sarif: true` on the action (or
   `--sarif-dir` on the script) sends gitleaks, Semgrep, Trivy and pattern
   findings to the Security tab and pull request alerts.
+- **Baseline.** `npx preflightkit baseline` accepts every current finding in
+  `.preflightkit-baseline`; from then on only new findings are reported, so
+  strict mode works on an existing codebase. Uses each scanner's own
+  mechanism (gitleaks fingerprints, Semgrep baseline commit, Trivy IDs).
 - **Pull request annotations** for risky lines, and `blocking`, `warnings` and
   `errors` outputs on the GitHub Action.
 - Action inputs `fail-on` (`findings`, `warnings`, `never`), `audit-level`

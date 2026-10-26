@@ -19,6 +19,8 @@ Usage:
   npx preflightkit [path] [options] Run the security self-check (default: current folder)
   npx preflightkit check [path]     Same as above
   npx preflightkit doctor [path]    Show which scanners are installed and how to add the rest
+  npx preflightkit baseline [path]  Accept every current finding (.preflightkit-baseline), so only
+                                    new ones are reported from now on
   npx preflightkit init [--force]   Add the GitHub Actions workflow to this project
   npx preflightkit pre-commit       Add a git pre-commit hook that blocks commits containing secrets
   npx preflightkit rules [targets]  Give your AI coding assistant PreflightKit's secure-coding
@@ -33,6 +35,8 @@ Check options:
                         high (default) or critical
   --include-dev         Also audit development dependencies
   --strict              Treat advisory findings (risky patterns, Semgrep) as blocking
+  --no-baseline         Ignore .preflightkit-baseline and report everything
+  --sarif-dir=DIR       Also write SARIF reports for GitHub code scanning
 
 Exit code: 0 nothing blocking, 1 blocking findings, 2 a scanner could not run.
 Accept a reviewed pattern match with a "preflightkit-ignore" comment on or above
@@ -44,7 +48,7 @@ It only reads your code. Use it on projects you own or are authorized to test.
 
 Guides for every stack: ${REPO}`;
 
-const CHECK_OPTION = /^--(strict|include-dev|audit-level=(low|moderate|high|critical))$/;
+const CHECK_OPTION = /^--(strict|include-dev|no-baseline|write-baseline|sarif-dir=.+|audit-level=(low|moderate|high|critical))$/;
 
 // Finds an executable on PATH, like `which`.
 function which(cmd) {
@@ -396,6 +400,8 @@ function main(argv) {
       return doctor(rest[0]);
     case 'pre-commit':
       return preCommit();
+    case 'baseline':
+      return check(['--write-baseline', ...rest]);
     case 'checklist':
       return checklist();
     case 'check':

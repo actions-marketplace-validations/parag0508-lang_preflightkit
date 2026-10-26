@@ -11,6 +11,8 @@
 #   --include-dev        also audit development dependencies
 #   --strict             treat advisory findings as blocking too
 #   --sarif-dir=DIR      also write SARIF reports (for GitHub code scanning) to DIR
+#   --write-baseline     accept every current finding: write .preflightkit-baseline
+#   --no-baseline        ignore .preflightkit-baseline and report everything
 #
 # Every result is one of:
 #   [fail]   blocking: leaked secrets, vulnerable dependencies at or above the
@@ -25,6 +27,8 @@
 # To accept a reviewed finding of the pattern check, put "preflightkit-ignore"
 # in a comment on the line or the line above, or list paths to skip in
 # .preflightkitignore at the project root (also passed to Semgrep and Trivy).
+# To adopt it on an existing codebase, run with --write-baseline once and commit
+# .preflightkit-baseline: after that, only new findings are reported.
 #
 # This script only READS your code and dependencies. It does not attack any
 # running system. Use it only on code you own or are authorized to work on.
@@ -34,13 +38,15 @@
 
 set -uo pipefail
 
-TARGET=.; AUDIT_LEVEL=high; INCLUDE_DEV=""; PROD_ONLY=1; STRICT=0; SARIF_DIR=""
+TARGET=.; AUDIT_LEVEL=high; INCLUDE_DEV=""; PROD_ONLY=1; STRICT=0; SARIF_DIR=""; WRITE_BASELINE=0; USE_BASELINE=1
 for arg in "$@"; do
   case "$arg" in
     --audit-level=*) AUDIT_LEVEL="${arg#*=}" ;;
     --include-dev)   INCLUDE_DEV=1; PROD_ONLY="" ;;
     --strict)        STRICT=1 ;;
     --sarif-dir=*)   SARIF_DIR="${arg#*=}" ;;
+    --write-baseline) WRITE_BASELINE=1 ;;
+    --no-baseline)   USE_BASELINE=0 ;;
     -h|--help)       awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     -*)              echo "security-check.sh: unknown option $arg (see --help)" >&2; exit 2 ;;
     *)               TARGET="$arg" ;;
@@ -59,6 +65,21 @@ if [ -n "$SARIF_DIR" ]; then
   sarif_results=""
 fi
 [ -d "$TARGET" ] || { echo "security-check.sh: \"$TARGET\" is not a folder" >&2; exit 2; }
+
+# Scratch files. Under RUNNER_TEMP in GitHub Actions, where the scanner
+# containers can see them.
+TMPD=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/preflightkit.XXXXXX") || { echo "security-check.sh: cannot create a temp folder" >&2; exit 2; }
+trap 'rm -rf "$TMPD"' EXIT
+
+# .preflightkit-baseline: findings accepted earlier, one per line as
+# "<scanner> <id>". Only findings that aren't in it are reported.
+BASELINE_FILE="$TARGET/.preflightkit-baseline"
+BASELINE=""
+if [ "$WRITE_BASELINE" -eq 0 ] && [ "$USE_BASELINE" -eq 1 ] && [ -f "$BASELINE_FILE" ]; then
+  BASELINE="$TMPD/baseline"; tr -d '\r' < "$BASELINE_FILE" > "$BASELINE"
+fi
+baseline_ids() { [ -n "$BASELINE" ] && sed -n "s/^$1 //p" "$BASELINE"; }
+NEW_BASELINE="$TMPD/new-baseline"; : > "$NEW_BASELINE"
 
 PASS=0; FAIL=0; WARN=0; ERR=0; SKIP=0
 FAIL_MSGS=(); WARN_MSGS=(); ERR_MSGS=()
@@ -112,21 +133,35 @@ printf '\033[1mPreflightKit — security self-check\033[0m\n'
 printf 'Target: %s\n' "$(cd "$TARGET" && pwd)"
 printf 'Dependency audit level: %s%s\n' "$AUDIT_LEVEL" "${PROD_ONLY:+ (production dependencies only)}"
 [ ${#IGNORES[@]} -gt 0 ] && printf 'Skipping paths from .preflightkitignore: %s\n' "${IGNORES[*]}"
+[ -n "$BASELINE" ] && printf 'Baseline: %s accepted finding(s) in .preflightkit-baseline; only new ones are reported\n' "$(grep -cE '^[a-z]+ ' "$BASELINE")"
+[ "$WRITE_BASELINE" -eq 1 ] && printf 'Writing a baseline: every current finding will be accepted\n'
 
 # ---------------------------------------------------------------------------
 say "1. Secret scanning (code + git history)"
 if have gitleaks; then
   # gitleaks 8.19+ uses `git` (repo + history) / `dir` (files only); older versions use `detect`.
   # Leaks exit with 3, so any other non-zero code means gitleaks itself failed.
+  # It runs inside the project, so finding fingerprints don't depend on where
+  # the check is started from, and the project's .gitleaksignore is used.
   if gitleaks git --help >/dev/null 2>&1; then
-    if [ -e "$TARGET/.git" ]; then gl=(gitleaks git "$TARGET"); else gl=(gitleaks dir "$TARGET"); fi
+    if [ -e "$TARGET/.git" ]; then gl=(gitleaks git .); else gl=(gitleaks dir .); fi
   else
-    gl=(gitleaks detect --source "$TARGET")
+    gl=(gitleaks detect --source .)
   fi
   gl+=(--no-banner --redact --verbose --exit-code 3)
-  [ -n "$SARIF_DIR" ] && gl+=(--report-format sarif --report-path "$SARIF_DIR/gitleaks.sarif")
-  [ -f "$TARGET/.gitleaksignore" ] && gl+=(--gitleaks-ignore-path "$TARGET")
-  "${gl[@]}"; code=$?
+  if [ "$WRITE_BASELINE" -eq 1 ]; then
+    gl+=(--report-format json --report-path "$TMPD/gitleaks.json")
+  elif [ -n "$SARIF_DIR" ]; then
+    gl+=(--report-format sarif --report-path "$SARIF_DIR/gitleaks.sarif")
+  fi
+  if [ -n "$(baseline_ids gitleaks)" ]; then
+    { [ -f "$TARGET/.gitleaksignore" ] && cat "$TARGET/.gitleaksignore"; echo; baseline_ids gitleaks; } > "$TMPD/gitleaksignore"
+    gl+=(--gitleaks-ignore-path "$TMPD/gitleaksignore")
+  fi
+  ( cd "$TARGET" && "${gl[@]}" ); code=$?
+  if [ "$WRITE_BASELINE" -eq 1 ] && [ -f "$TMPD/gitleaks.json" ]; then
+    grep -oE '"Fingerprint": *"[^"]*"' "$TMPD/gitleaks.json" | sed -E 's/^"Fingerprint": *"(.*)"$/gitleaks \1/' >> "$NEW_BASELINE"
+  fi
   case $code in
     0) ok "gitleaks found no secrets" ;;
     3) fail "gitleaks found potential secrets — review above (accept a false positive with a gitleaks:allow comment or .gitleaksignore)" ;;
@@ -148,8 +183,17 @@ say "2. Static analysis (code-level flaws)"
 if have semgrep; then
   sg_args=(); for p in ${IGNORES[@]+"${IGNORES[@]}"}; do sg_args+=(--exclude "$p"); done
   [ -n "$SARIF_DIR" ] && sg_args+=(--sarif-output="$SARIF_DIR/semgrep.sarif")
+  # Semgrep's own baseline: only findings introduced after the baseline commit.
+  sg_commit=$(baseline_ids semgrep-commit | head -n 1)
+  [ -n "$sg_commit" ] && sg_args+=(--baseline-commit "$sg_commit")
+  if [ "$WRITE_BASELINE" -eq 1 ] && head=$(git -C "$TARGET" rev-parse HEAD 2>/dev/null); then
+    echo "semgrep-commit $head" >> "$NEW_BASELINE"
+    [ -n "$(git -C "$TARGET" status --porcelain 2>/dev/null)" ] \
+      && echo "  Note: Semgrep findings in uncommitted changes aren't covered by the baseline. Commit first to include them."
+  fi
   # PYTHONUTF8: on Windows, Semgrep otherwise writes reports in the ANSI code page and crashes.
-  PYTHONUTF8=1 semgrep scan --config=auto --error --no-git-ignore ${sg_args[@]+"${sg_args[@]}"} "$TARGET"; code=$?
+  # Run inside the project: the baseline commit is looked up in its git history.
+  ( cd "$TARGET" && PYTHONUTF8=1 semgrep scan --config=auto --error --no-git-ignore ${sg_args[@]+"${sg_args[@]}"} . ); code=$?
   case $code in
     0) ok "semgrep found no issues" ;;
     1) warn "semgrep flagged issues — review above (accept a reviewed one with a nosemgrep comment)" ;;
@@ -285,10 +329,20 @@ if have trivy; then
       --skip-files "**/.env" --skip-files "**/.env.local" --skip-files "**/.env.*.local")
   for p in ${IGNORES[@]+"${IGNORES[@]}"}; do tv+=(--skip-dirs "**/$p" --skip-files "**/$p"); done
   [ -n "$INCLUDE_DEV" ] && tv+=(--include-dev-deps)
-  [ -f "$TARGET/.trivyignore" ] && tv+=(--ignorefile "$TARGET/.trivyignore")
+  if [ -n "$(baseline_ids trivy)" ]; then
+    { [ -f "$TARGET/.trivyignore" ] && cat "$TARGET/.trivyignore"; echo; baseline_ids trivy; } > "$TMPD/trivyignore"
+    tv+=(--ignorefile "$TMPD/trivyignore")
+  elif [ -f "$TARGET/.trivyignore" ]; then
+    tv+=(--ignorefile "$TARGET/.trivyignore")
+  fi
   "${tv[@]}" "$TARGET"; code=$?
   # Trivy writes one format per run; the second run reuses the downloaded database.
   [ -n "$SARIF_DIR" ] && "${tv[@]}" --format sarif --output "$SARIF_DIR/trivy.sarif" --exit-code 0 "$TARGET" >/dev/null 2>&1
+  if [ "$WRITE_BASELINE" -eq 1 ] && [ "$code" -eq 3 ]; then
+    "${tv[@]}" --format json --output "$TMPD/trivy.json" --exit-code 0 "$TARGET" >/dev/null 2>&1
+    grep -oE '"(VulnerabilityID|RuleID|AVDID)": *"[^"]*"' "$TMPD/trivy.json" 2>/dev/null \
+      | sed -E 's/^"[A-Za-z]+": *"(.*)"$/trivy \1/' >> "$NEW_BASELINE"
+  fi
   case $code in
     0) ok "trivy found no $TRIVY_SEVERITY issues" ;;
     3) fail "trivy found $TRIVY_SEVERITY vulnerabilities, secrets or misconfigurations — review above (accept one in .trivyignore)" ;;
@@ -317,7 +371,7 @@ else
   raw=$(cd "$TARGET" && grep -rniE "${opts[@]}" "$CODE_PATTERNS|$SECRET_PATTERN" . 2>/dev/null | head -n 500)
 fi
 # Drop accepted and known-safe matches. Paths are "./file:line:text".
-kept=0; ignored=0; shown=""
+kept=0; ignored=0; baselined=0; shown=""
 while IFS= read -r m; do
   [ -n "$m" ] || continue
   file="${m%%:*}"; file="${file#./}"; rest="${m#*:}"; n="${rest%%:*}"; text="${rest#*:}"
@@ -334,10 +388,18 @@ while IFS= read -r m; do
      && sed -n "${n},$((n+2))p" "$TARGET/$file" | grep -q 'JSON\.stringify('; then
     continue   # serialized data, e.g. a JSON-LD <script> tag
   fi
+  # Baseline entries name the file and the line's text, not its number, so
+  # they survive edits elsewhere in the file.
+  trimmed="${text#"${text%%[![:space:]]*}"}"
+  fingerprint="pattern $file:$trimmed"
+  if [ "$WRITE_BASELINE" -eq 1 ]; then
+    echo "$fingerprint" >> "$NEW_BASELINE"
+  elif [ -n "$BASELINE" ] && grep -Fxq -- "$fingerprint" "$BASELINE"; then
+    baselined=$((baselined+1)); continue
+  fi
   kept=$((kept+1))
   # Report paths are relative to the repository root.
   apath="${TARGET%/}/$file"; apath="${apath#"${GITHUB_WORKSPACE:-}/"}"; apath="${apath#./}"
-  trimmed="${text#"${text%%[![:space:]]*}"}"
   if [ "$kept" -le 40 ]; then
     shown+="$file:$n:$text"$'\n'
     [ "$kept" -le 10 ] && annotate warning "Risky pattern: $trimmed" "$apath" "$n"
@@ -348,6 +410,7 @@ while IFS= read -r m; do
   fi
 done <<<"$raw"
 [ "$ignored" -gt 0 ] && echo "  ($ignored match(es) accepted via preflightkit-ignore or .preflightkitignore)"
+[ "$baselined" -gt 0 ] && echo "  ($baselined match(es) accepted in .preflightkit-baseline)"
 if [ "$kept" -gt 0 ]; then
   printf '%s' "$shown"
   [ "$kept" -gt 40 ] && echo "  ... and $((kept-40)) more"
@@ -380,6 +443,17 @@ printf '  ok: %d   blocking: %d   advisory: %d   scanner errors: %d   skipped: %
 printf '\nNext: fix blocking findings first, then review advisory ones by real risk.\n'
 printf 'For dynamic scanning of a RUNNING app, use OWASP ZAP separately.\n'
 
+# gitleaks and Semgrep ran inside the project, so their SARIF paths are relative
+# to it. Code scanning needs them relative to the repository root.
+if [ -n "$SARIF_DIR" ]; then
+  rel="${TARGET%/}"; rel="${rel#"${GITHUB_WORKSPACE:-}/"}"; rel="${rel#./}"
+  if [ -n "$rel" ] && [ "$rel" != "." ] && [ "${rel:0:1}" != "/" ]; then
+    for f in "$SARIF_DIR/gitleaks.sarif" "$SARIF_DIR/semgrep.sarif"; do
+      [ -f "$f" ] && sed -E "s|(\"uri\": *\")|\1$rel/|g" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    done
+  fi
+fi
+
 # In GitHub Actions, also write a summary to the run page and expose the counts.
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
@@ -402,6 +476,17 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
 fi
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   { echo "blocking=$BLOCKING"; echo "warnings=$WARN"; echo "errors=$ERR"; } >> "$GITHUB_OUTPUT"
+fi
+
+if [ "$WRITE_BASELINE" -eq 1 ]; then
+  {
+    echo "# PreflightKit baseline: findings accepted on $(date +%Y-%m-%d). Only new findings are reported."
+    echo "# Delete a line to report that finding again. Regenerate: npx preflightkit baseline"
+    sort -u "$NEW_BASELINE"
+  } > "$BASELINE_FILE"
+  printf '\nWrote %s with %d accepted finding(s). Commit it.\n' "$BASELINE_FILE" "$(sort -u "$NEW_BASELINE" | grep -vc '^semgrep-commit ')"
+  printf 'Dependency audits (npm, composer, ...) are not baselined: use --audit-level, or fix them.\n'
+  exit 0
 fi
 
 if [ "$BLOCKING" -gt 0 ]; then exit 1; elif [ "$ERR" -gt 0 ]; then exit 2; else exit 0; fi

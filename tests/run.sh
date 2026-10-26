@@ -44,6 +44,21 @@ if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
 fi
 rm -rf "$sarif_tmp"
 
+# Baseline: accept today's findings, then only new ones are reported.
+bl=$(mktemp -d); cp fixtures/vulnerable/* "$bl/"
+# A git repo, as in real projects: Semgrep's baseline is a commit.
+( cd "$bl" && git init -q && git add -A && git -c user.email=t@example.com -c user.name=t commit -qm init )
+bash scripts/security-check.sh --write-baseline "$bl" >/dev/null 2>&1
+check "baseline written" grep -q '^pattern loader.py:return pickle.loads(data)$' "$bl/.preflightkit-baseline"
+bash scripts/security-check.sh --strict "$bl" >/tmp/pk-bl.log 2>&1
+check "  strict run passes once findings are baselined" [ $? -eq 0 ]
+echo 'eval(user_input)' >> "$bl/loader.py"
+bash scripts/security-check.sh --strict "$bl" >/tmp/pk-bl.log 2>&1
+check "  a new finding is still reported" grep -q 'loader.py:[0-9]*:eval(user_input)' /tmp/pk-bl.log
+bash scripts/security-check.sh --strict --no-baseline "$bl" >/dev/null 2>&1
+check "  --no-baseline reports everything" [ $? -eq 1 ]
+rm -rf "$bl"
+
 # Monorepo: every folder with a lockfile is audited; dependencies, tests and
 # ignored paths are not. A stand-in npm reports vulnerabilities in apps/web only.
 mono=$(mktemp -d)
