@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="376" viewBox="0 0 920 376" role="img" aria-label="Illustration: Claude Code tries to deploy, PreflightKit stops it because of a leaked secret and a vulnerable dependency, Claude fixes both, and the deploy goes through.">
+<style>text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;font-size:14px;white-space:pre}.user{fill:#e6edf3;font-weight:700}.tool{fill:#7ee787}.bad{fill:#ff7b72}.text{fill:#c9d1d9}.dim{fill:#8b949e}.good{fill:#56d364;font-weight:700}.title{fill:#8b949e;font-size:13px}@media (prefers-reduced-motion: reduce){.l{animation:none!important;opacity:1!important}}@keyframes a0{0%,1.88%{opacity:0}3.38%,94%{opacity:1}100%{opacity:0}}.l0{animation:a0 16.0s infinite}@keyframes a1{0%,8.75%{opacity:0}10.25%,94%{opacity:1}100%{opacity:0}}.l1{animation:a1 16.0s infinite}@keyframes a2{0%,16.25%{opacity:0}17.75%,94%{opacity:1}100%{opacity:0}}.l2{animation:a2 16.0s infinite}@keyframes a3{0%,20.00%{opacity:0}21.50%,94%{opacity:1}100%{opacity:0}}.l3{animation:a3 16.0s infinite}@keyframes a4{0%,23.75%{opacity:0}25.25%,94%{opacity:1}100%{opacity:0}}.l4{animation:a4 16.0s infinite}@keyframes a5{0%,31.25%{opacity:0}32.75%,94%{opacity:1}100%{opacity:0}}.l5{animation:a5 16.0s infinite}@keyframes a6{0%,31.25%{opacity:0}32.75%,94%{opacity:1}100%{opacity:0}}.l6{animation:a6 16.0s infinite}@keyframes a7{0%,43.75%{opacity:0}45.25%,94%{opacity:1}100%{opacity:0}}.l7{animation:a7 16.0s infinite}@keyframes a8{0%,51.25%{opacity:0}52.75%,94%{opacity:1}100%{opacity:0}}.l8{animation:a8 16.0s infinite}@keyframes a9{0%,58.75%{opacity:0}60.25%,94%{opacity:1}100%{opacity:0}}.l9{animation:a9 16.0s infinite}@keyframes a10{0%,66.25%{opacity:0}67.75%,94%{opacity:1}100%{opacity:0}}.l10{animation:a10 16.0s infinite}</style>
+<rect width="920" height="376" rx="10" fill="#0d1117"/>
+<rect width="920" height="36" rx="10" fill="#161b22"/><rect y="26" width="920" height="10" fill="#161b22"/>
+<circle cx="22" cy="18" r="6" fill="#ff5f56"/><circle cx="42" cy="18" r="6" fill="#ffbd2e"/><circle cx="62" cy="18" r="6" fill="#27c93f"/>
+<text class="title" x="460" y="23" text-anchor="middle">Claude Code with the PreflightKit deploy gate (illustration)</text>
+<text class="l l0 user" x="24" y="64">&gt; deploy the app to production</text>
+<text class="l l1 tool" x="24" y="88">● Bash(vercel --prod)</text>
+<text class="l l2 bad" x="24" y="112">  ⎿  PreflightKit stopped this deploy: the security check found blocking issues.</text>
+<text class="l l3 bad" x="24" y="136">     - [fail] gitleaks found potential secrets (src/lib/payments.ts:4)</text>
+<text class="l l4 bad" x="24" y="160">     - [fail] trivy found HIGH,CRITICAL vulnerabilities (lodash 4.17.15: CVE-2021-23337)</text>
+<text class="l l5 text" x="24" y="208">● I didn’t deploy. Moving the key to an environment variable and upgrading</text>
+<text class="l l6 text" x="24" y="232">  lodash to 4.17.21. Please rotate the leaked key with your provider.</text>
+<text class="l l7 tool" x="24" y="280">● Bash(npx preflightkit)</text>
+<text class="l l8 dim" x="24" y="304">  ⎿  ok: 4   blocking: 0   advisory: 0   scanner errors: 0</text>
+<text class="l l9 tool" x="24" y="328">● Bash(vercel --prod)</text>
+<text class="l l10 good" x="24" y="352">  ⎿  ✓ Production deployment ready</text>
+</svg>

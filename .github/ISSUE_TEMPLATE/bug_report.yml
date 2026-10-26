@@ -1,0 +1,38 @@
+name: Bug report
+description: Something doesn't work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Found a **security problem in PreflightKit itself**? Please report it
+        privately instead: see [SECURITY.md](https://github.com/parag0508-lang/preflightkit/blob/main/SECURITY.md).
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - CLI (npx preflightkit)
+        - GitHub Action
+        - Claude Code plugin / skills
+        - Deploy gate hook
+        - Docs
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Relevant log lines. Remove anything sensitive.
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Version and environment
+      placeholder: "1.1.0, Windows 11 + Git Bash, Node 22"

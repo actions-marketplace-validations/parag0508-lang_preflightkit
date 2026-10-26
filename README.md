@@ -1,6 +1,15 @@
 # PreflightKit
 
+[![npm](https://img.shields.io/npm/v/preflightkit?color=2ea043)](https://www.npmjs.com/package/preflightkit)
+[![CI](https://github.com/parag0508-lang/preflightkit/actions/workflows/ci.yml/badge.svg)](https://github.com/parag0508-lang/preflightkit/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/parag0508-lang/preflightkit?style=social)](https://github.com/parag0508-lang/preflightkit/stargazers)
+
 **Is your app ready to ship? Check it in 5 minutes.**
+
+<p align="center">
+  <img src="./docs/assets/demo.svg" width="860" alt="Illustration: Claude Code tries to deploy with vercel --prod. PreflightKit stops it because of a leaked secret and a vulnerable lodash version. Claude fixes both, the check passes, and the deploy goes through.">
+</p>
 
 A free, open toolkit that catches the security mistakes attackers actually
 exploit, plus the UX, accessibility and database gaps that break launches. It
@@ -210,6 +219,8 @@ PreflightKit is growing into **a ship-readiness kit for production apps**. Secur
 UI/UX and accessibility, and databases are available now. Performance, design
 systems, deployment and privacy come next, along with ready-made skills for AI
 coding assistants. See the [ROADMAP](./ROADMAP.md) and pick something to help with.
+
+If PreflightKit catches something for you, a ⭐ helps other developers find it.
 
 ## Contributing
 
