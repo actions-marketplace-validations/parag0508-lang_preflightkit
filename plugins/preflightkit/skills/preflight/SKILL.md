@@ -19,7 +19,9 @@ References in this skill's directory:
    Ask the user only for what you can't find in the repo.
 
 2. **Security** (blockers live here most often):
-   - Run `bash scripts/security-check.sh <project-path>`.
+   - Run `bash scripts/security-check.sh <project-path>`. `[fail]` results are
+     blocking, `[warn]` are advisory (verify before counting them), and
+     `[error]` means that scanner didn't run: put it under "Not checked".
    - Check that the runtime and framework versions are supported and patched.
    - Spot-check the highest-risk items in `references/security-checklist.md`:
      authorization on sensitive routes, secrets out of the repo, debug off,
@@ -42,7 +44,8 @@ References in this skill's directory:
 
 ## Verdict rules
 - **NO-GO** if any of these is true: a critical security finding (remote code
-  execution, auth bypass, exposed secrets, SQL injection on a public route), the
+  execution, auth bypass, exposed secrets, SQL injection on a public route), an
+  unresolved `[fail]` from the scanner, the
   runtime is end-of-life and internet-facing, no backups for production data, or
   debug mode is on in production.
 - **GO WITH RISKS** if there are high or medium issues with a clear plan and date
@@ -71,4 +74,11 @@ References in this skill's directory:
 ## Not checked
 … (anything you couldn't verify from here)
 ```
-Keep the lists short and ordered by risk. Offer to fix the blockers.
+Keep the lists short and ordered by risk. Offer to fix the blockers, one at a
+time, re-running the scanner after each. Never clear a blocker by adding an
+ignore comment or lowering the audit level unless the user explicitly decides to
+accept that risk.
+
+To make this check automatic, the PreflightKit plugin also stops deploy commands
+(`vercel --prod`, `git push` to main and similar) when the scanner finds
+something blocking. Tell the user what blocked it and how to fix it.

@@ -17,8 +17,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Shell syntax and lint
         run: |
-          for f in scripts/*.sh tests/*.sh; do bash -n "$f"; done
-          shellcheck -S warning scripts/*.sh tests/*.sh
+          for f in scripts/*.sh tests/*.sh plugins/preflightkit/hooks/*.sh; do bash -n "$f"; done
+          shellcheck -S warning scripts/*.sh tests/*.sh plugins/preflightkit/hooks/*.sh
+      - name: Plugin manifests are valid JSON
+        run: |
+          for f in .claude-plugin/marketplace.json plugins/preflightkit/.claude-plugin/plugin.json plugins/preflightkit/hooks/hooks.json; do
+            python3 -m json.tool "$f" >/dev/null || { echo "::error file=$f::Invalid JSON"; exit 1; }
+          done
       - name: Skill references are in sync with docs
         run: |
           ./scripts/sync-plugin.sh
@@ -41,8 +46,16 @@ jobs:
         run: |
           node bin/preflightkit.js --version
           node bin/preflightkit.js --help
+          node bin/preflightkit.js fixtures/clean
+          node bin/preflightkit.js fixtures/vulnerable --strict && exit 1 || [ $? -eq 1 ]
+          node bin/preflightkit.js doctor
           cd "$(mktemp -d)" && node "$GITHUB_WORKSPACE/bin/preflightkit.js" init
           test -f .github/workflows/preflightkit.yml
+          node "$GITHUB_WORKSPACE/bin/preflightkit.js" rules --all
+          test -f AGENTS.md -a -f CLAUDE.md -a -f .github/copilot-instructions.md
+      - name: npm package contains what the CLI needs
+        run: |
+          npm pack --dry-run --json | python3 -c "import json,sys; f={x['path'] for x in json.load(sys.stdin)[0]['files']}; need={'bin/preflightkit.js','scripts/security-check.sh','templates/preflightkit.yml','plugins/preflightkit/skills/secure-coding/SKILL.md','SECURITY-CHECKLIST.md'}; missing=need-f; print('missing:', missing) if missing else print('package OK'); sys.exit(1 if missing else 0)"
 
   action:
     name: Action self-test
@@ -54,20 +67,20 @@ jobs:
         uses: ./
         with:
           path: fixtures/vulnerable
-          fail-on-warnings: false
-      - name: Scan clean fixture
+          fail-on: never
+      - name: Scan clean fixture   # default fail-on: findings, so this step fails if anything blocks
         id: clean
         uses: ./
         with:
           path: fixtures/clean
           install-tools: false   # tools are already set up by the previous step
-          fail-on-warnings: false
       - name: Check results
         env:
-          VULN: ${{ steps.vulnerable.outputs.exit-code }}
+          VULN_WARNINGS: ${{ steps.vulnerable.outputs.warnings }}
           CLEAN: ${{ steps.clean.outputs.exit-code }}
+          CLEAN_ERRORS: ${{ steps.clean.outputs.errors }}
         run: |
-          echo "vulnerable=$VULN clean=$CLEAN"
-          [ "$VULN" = "1" ] || { echo "::error::Vulnerable fixture was not flagged"; exit 1; }
-          [ "$CLEAN" = "0" ] || { echo "::error::Clean fixture was flagged"; exit 1; }
+          echo "vulnerable warnings=$VULN_WARNINGS clean exit=$CLEAN errors=$CLEAN_ERRORS"
+          [ "$VULN_WARNINGS" -ge 1 ] || { echo "::error::Vulnerable fixture was not flagged"; exit 1; }
+          [ "$CLEAN" = "0" ] && [ "$CLEAN_ERRORS" = "0" ] || { echo "::error::Clean fixture was flagged"; exit 1; }
           bash tests/run.sh

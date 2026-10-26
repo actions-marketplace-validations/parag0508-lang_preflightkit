@@ -1,0 +1,44 @@
+name: False positive
+description: PreflightKit flagged code that is actually safe
+labels: ["false positive"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks: false-positive reports are how the checks get sharper.
+        **Don't paste real secrets.** Replace them with placeholders.
+        You can accept a reviewed finding right away with a `preflightkit-ignore`
+        comment, `.preflightkitignore`, or `npx preflightkit baseline`.
+  - type: dropdown
+    id: check
+    attributes:
+      label: Which check?
+      options:
+        - Pattern check (risky patterns)
+        - gitleaks (secrets)
+        - Semgrep
+        - Trivy
+        - Dependency audit (npm, composer, pip-audit, ...)
+        - Deploy gate (Claude Code plugin)
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What was reported
+      description: The [fail] or [warn] line and the matched code.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it's safe
+      description: For example "the value is serialized JSON" or "the input is validated above".
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PreflightKit version
+      placeholder: "npx preflightkit --version"

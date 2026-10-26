@@ -33,6 +33,13 @@ then hand back a report they can act on.
    dangerous patterns. If tools are missing, say which ones and carry on. The
    manual review below is still worth doing.
 
+   Read its results by kind: `[fail]` is blocking (secrets, vulnerable
+   dependencies at or above the audit level), `[warn]` is advisory (risky
+   patterns and Semgrep hits to verify by hand, many are false positives), and
+   `[error]` means a scanner crashed, so that area was **not** checked. List
+   every `[error]` under "didn't check", never as "clean". Exit code: 0 nothing
+   blocking, 1 blocking, 2 a scanner could not run.
+
 3. **Read the references for this stack**: `references/checklist.md` (OWASP Top
    10), plus the matching file in `references/stacks/` (for example
    `nodejs.md`, `php.md`, or `ai-llm-apps.md` if the app calls a language model).
@@ -87,3 +94,14 @@ on a sensitive path. *Low*: hardening and hygiene.
 
 Order findings by severity, then by whether they're internet-facing. Offer to fix
 the top issues directly, one at a time, and show each diff.
+
+## Fixing findings
+- Fix the cause in code. After each fix, re-run the scanner and confirm the
+  finding is gone.
+- A pattern hit you've traced and confirmed safe is a false positive: say so in
+  the report. **Only** add a suppression (`preflightkit-ignore`, `nosemgrep`,
+  `gitleaks:allow`, `.preflightkitignore`, `.trivyignore`) when the user agrees,
+  and write the reason in the comment, e.g.
+  `// preflightkit-ignore: slug is validated against /^[a-z0-9-]+$/ above`.
+- A leaked secret is fixed by **rotating** it, not by deleting the line: it's
+  still in git history. Tell the user to revoke it with the provider.

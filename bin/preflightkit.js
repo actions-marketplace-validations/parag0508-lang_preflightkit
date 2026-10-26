@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // PreflightKit CLI: is your app ready to ship?
-// Usage: npx preflightkit [check] [path] | init [--force] | checklist | --help | --version
+// Usage: npx preflightkit [check] [path] [options] | doctor [path] | init [--force]
+//        | rules [targets] [--force] | checklist | --help | --version
 
 'use strict';
 
@@ -15,11 +16,31 @@ const REPO = 'https://github.com/parag0508-lang/preflightkit';
 const HELP = `PreflightKit ${pkg.version}: is your app ready to ship?
 
 Usage:
-  npx preflightkit [path]           Run the security self-check (default: current folder)
+  npx preflightkit [path] [options] Run the security self-check (default: current folder)
   npx preflightkit check [path]     Same as above
+  npx preflightkit doctor [path]    Show which scanners are installed and how to add the rest
+  npx preflightkit baseline [path]  Accept every current finding (.preflightkit-baseline), so only
+                                    new ones are reported from now on
   npx preflightkit init [--force]   Add the GitHub Actions workflow to this project
+  npx preflightkit pre-commit       Add a git pre-commit hook that blocks commits containing secrets
+  npx preflightkit rules [targets]  Give your AI coding assistant PreflightKit's secure-coding
+                                    rules: --agents (AGENTS.md), --copilot, --cursor,
+                                    --claude (CLAUDE.md), --windsurf, or --all.
+                                    Default: --agents --copilot --cursor
   npx preflightkit checklist        Print the pre/post-deploy security checklist
   npx preflightkit --help | --version
+
+Check options:
+  --audit-level=LEVEL   Lowest dependency severity that blocks: low, moderate,
+                        high (default) or critical
+  --include-dev         Also audit development dependencies
+  --strict              Treat advisory findings (risky patterns, Semgrep) as blocking
+  --no-baseline         Ignore .preflightkit-baseline and report everything
+  --sarif-dir=DIR       Also write SARIF reports for GitHub code scanning
+
+Exit code: 0 nothing blocking, 1 blocking findings, 2 a scanner could not run.
+Accept a reviewed pattern match with a "preflightkit-ignore" comment on or above
+the line, or list paths to skip in .preflightkitignore.
 
 The check runs free scanners you have installed (gitleaks, Semgrep, Trivy,
 npm/composer/pip/bundle/go/dotnet audits) and flags risky code patterns.
@@ -27,25 +48,167 @@ It only reads your code. Use it on projects you own or are authorized to test.
 
 Guides for every stack: ${REPO}`;
 
-function hasBash() {
-  const r = spawnSync('bash', ['--version'], { stdio: 'ignore' });
-  return r.status === 0;
+const CHECK_OPTION = /^--(strict|include-dev|no-baseline|write-baseline|sarif-dir=.+|audit-level=(low|moderate|high|critical))$/;
+
+// Finds an executable on PATH, like `which`.
+function which(cmd) {
+  const exts = process.platform === 'win32'
+    ? ['', ...(process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';')]
+    : [''];
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const p = path.join(dir, cmd + ext);
+      try { if (fs.statSync(p).isFile()) return p; } catch { /* not here */ }
+    }
+  }
+  return null;
 }
 
-function check(target) {
+// Returns the bash to run the check with, or null. On Windows, Git Bash is
+// found even when it isn't on PATH, and System32\bash.exe is avoided: it is
+// the WSL launcher, which can't read Windows paths.
+function findBash() {
+  if (process.env.PREFLIGHTKIT_BASH) return process.env.PREFLIGHTKIT_BASH;
+  if (process.platform !== 'win32') {
+    return spawnSync('bash', ['--version'], { stdio: 'ignore' }).status === 0 ? 'bash' : null;
+  }
+  const where = (cmd) => {
+    const r = spawnSync('where', [cmd], { encoding: 'utf8' });
+    return r.status === 0 ? r.stdout.split(/\r?\n/).filter(Boolean) : [];
+  };
+  const candidates = [];
+  for (const base of [process.env.ProgramFiles, process.env['ProgramFiles(x86)'],
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')]) {
+    if (base) candidates.push(path.join(base, 'Git', 'bin', 'bash.exe'));
+  }
+  for (const git of where('git')) {   // e.g. <Git>\cmd\git.exe or <Git>\mingw64\bin\git.exe
+    candidates.push(path.join(path.dirname(git), '..', 'bin', 'bash.exe'));
+    candidates.push(path.join(path.dirname(git), '..', '..', 'bin', 'bash.exe'));
+  }
+  const windir = process.env.SystemRoot || path.join(path.parse(process.cwd()).root, 'Windows');
+  const system32 = path.join(windir, 'System32').toLowerCase();
+  candidates.push(...where('bash').filter((p) => !p.toLowerCase().startsWith(system32)));
+  return candidates.find((p) => fs.existsSync(p)) || null;
+}
+
+// Resolves a folder argument, or prints an error and returns null.
+function folder(target) {
   const dir = path.resolve(target || '.');
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
     console.error(`preflightkit: "${target}" is not a folder.`);
+    return null;
+  }
+  return dir;
+}
+
+function check(args) {
+  const options = args.filter((a) => a.startsWith('-'));
+  const paths = args.filter((a) => !a.startsWith('-'));
+  const bad = options.find((o) => !CHECK_OPTION.test(o));
+  if (bad) {
+    console.error(`preflightkit: unknown option ${bad}\n\n${HELP}`);
     return 2;
   }
-  if (!hasBash()) {
-    console.error('preflightkit: the check needs bash. On Windows, run it from Git Bash or WSL.');
+  if (paths.length > 1) {
+    console.error('preflightkit: give one folder to check.');
+    return 2;
+  }
+  const dir = folder(paths[0]);
+  if (!dir) return 2;
+  const bash = findBash();
+  if (!bash) {
+    console.error('preflightkit: the check needs bash. On Windows, install Git for Windows (https://git-scm.com) or use WSL.\n' +
+      'If bash is installed somewhere unusual, set PREFLIGHTKIT_BASH to its path.');
     return 2;
   }
   const script = path.join(ROOT, 'scripts', 'security-check.sh');
-  const r = spawnSync('bash', [script, dir], { stdio: 'inherit' });
+  const r = spawnSync(bash, [script, ...options, dir], { stdio: 'inherit' });
   return r.status === null ? 1 : r.status;
 }
+
+// --- doctor ------------------------------------------------------------------
+
+const PLATFORM = { win32: 'win', darwin: 'mac' }[process.platform] || 'linux';
+
+const SCANNERS = [
+  { cmd: 'gitleaks', what: 'leaked secrets in code and git history',
+    install: { mac: 'brew install gitleaks', win: 'scoop install gitleaks',
+      linux: 'https://github.com/gitleaks/gitleaks/releases' } },
+  { cmd: 'semgrep', what: 'code flaws: injection, XSS, unsafe APIs',
+    install: { mac: 'brew install semgrep', win: 'pipx install semgrep  (or run the check in WSL)',
+      linux: 'pipx install semgrep' } },
+  { cmd: 'trivy', what: 'vulnerable dependencies, secrets, misconfigurations',
+    install: { mac: 'brew install trivy', win: 'scoop install trivy',
+      linux: 'https://trivy.dev/latest/getting-started/installation/' } },
+  { cmd: 'rg', what: 'faster pattern check (optional)',
+    install: { mac: 'brew install ripgrep', win: 'scoop install ripgrep', linux: 'sudo apt install ripgrep' } },
+];
+
+const AUDITORS = [
+  { marker: ['package-lock.json'], cmd: 'npm', name: 'npm audit', install: 'https://nodejs.org' },
+  { marker: ['pnpm-lock.yaml'], cmd: 'pnpm', name: 'pnpm audit', install: 'npm install -g pnpm' },
+  { marker: ['yarn.lock'], cmd: 'yarn', name: 'yarn audit', install: 'corepack enable' },
+  { marker: ['composer.lock'], cmd: 'composer', name: 'composer audit', install: 'https://getcomposer.org' },
+  { marker: ['requirements.txt', 'pyproject.toml'], cmd: 'pip-audit', name: 'pip-audit', install: 'pipx install pip-audit' },
+  { marker: ['go.mod'], cmd: 'govulncheck', name: 'govulncheck', install: 'go install golang.org/x/vuln/cmd/govulncheck@latest' },
+  { marker: ['Gemfile.lock'], cmd: 'bundle-audit', name: 'bundle-audit', install: 'gem install bundler-audit' },
+  { marker: ['.csproj', '.sln'], cmd: 'dotnet', name: 'dotnet vulnerable-package check', install: 'https://dot.net' },
+];
+
+// File names in the project, 3 folders deep, skipping the same folders the
+// scanner skips. Monorepos keep lockfiles in apps/* and packages/*.
+const SKIP_DIRS = new Set(['node_modules', 'vendor', 'dist', 'build', '.git', '.next', '.nuxt', 'coverage',
+  '__tests__', '__mocks__', 'test', 'tests', 'spec', 'e2e', 'fixtures', '.venv', 'venv']);
+function projectFiles(dir, depth = 0) {
+  const names = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (depth < 3 && !SKIP_DIRS.has(entry.name)) names.push(...projectFiles(path.join(dir, entry.name), depth + 1));
+    } else {
+      names.push(entry.name);
+    }
+  }
+  return names;
+}
+
+function doctor(target) {
+  const dir = folder(target);
+  if (!dir) return 2;
+  const row = (found, name, detail) =>
+    console.log(`  ${found ? '[found]  ' : '[missing]'} ${name.padEnd(12)} ${detail}`);
+
+  console.log(`PreflightKit doctor: ${dir}\n`);
+  const bash = findBash();
+  row(Boolean(bash), 'bash', bash ? `runs the check (${bash})` :'needed to run the check. Install Git for Windows: https://git-scm.com');
+
+  console.log('\nScanners:');
+  let core = 0;
+  for (const s of SCANNERS) {
+    const found = which(s.cmd);
+    if (found && s.cmd !== 'rg') core++;
+    row(Boolean(found), s.cmd, found ? s.what : `${s.what}\n${' '.repeat(25)}install: ${s.install[PLATFORM]}`);
+  }
+
+  const files = projectFiles(dir);
+  const auditors = AUDITORS.filter((a) => a.marker.some((m) =>
+    m.startsWith('.') ? files.some((f) => f.endsWith(m)) : files.includes(m)));
+  console.log('\nDependency auditors for this project:');
+  if (auditors.length === 0) console.log('  none needed (no lockfile found). Trivy still scans dependencies.');
+  for (const a of auditors) {
+    const found = which(a.cmd);
+    row(Boolean(found), a.cmd, found ? a.name : `${a.name}\n${' '.repeat(25)}install: ${a.install}`);
+  }
+
+  console.log(`\n${core} of 3 core scanners installed.`);
+  if (core < 3) {
+    console.log('Missing scanners are skipped locally. The GitHub Action installs all of them for you:');
+    console.log('  npx preflightkit init');
+  }
+  return 0;
+}
+
+// --- init --------------------------------------------------------------------
 
 function init(force) {
   const dest = path.join(process.cwd(), '.github', 'workflows', 'preflightkit.yml');
@@ -57,8 +220,165 @@ function init(force) {
   fs.copyFileSync(path.join(ROOT, 'templates', 'preflightkit.yml'), dest);
   console.log(`Created ${path.relative(process.cwd(), dest)}`);
   console.log('Commit and push it: every push and pull request will now be checked.');
+  console.log('To block deploys until it passes, see the comments at the end of the file.');
+  console.log('\nTip: npx preflightkit rules  gives your AI coding assistant the same security rules.');
   return 0;
 }
+
+// --- rules -------------------------------------------------------------------
+
+const START = '<!-- preflightkit:start -->';
+const END = '<!-- preflightkit:end -->';
+
+// block: a managed section inside a shared file. own: a file PreflightKit owns.
+const RULE_TARGETS = {
+  agents: { file: 'AGENTS.md', kind: 'block' },
+  copilot: { file: path.join('.github', 'copilot-instructions.md'), kind: 'block' },
+  cursor: { file: path.join('.cursor', 'rules', 'preflightkit.mdc'), kind: 'own',
+    header: '---\ndescription: PreflightKit secure-coding guardrails\nalwaysApply: true\n---\n\n' },
+  claude: { file: 'CLAUDE.md', kind: 'block' },
+  windsurf: { file: path.join('.windsurf', 'rules', 'preflightkit.md'), kind: 'own',
+    header: '---\ntrigger: always_on\n---\n\n' },
+};
+const DEFAULT_RULE_TARGETS = ['agents', 'copilot', 'cursor'];
+
+function rulesText() {
+  const skill = fs.readFileSync(
+    path.join(ROOT, 'plugins', 'preflightkit', 'skills', 'secure-coding', 'SKILL.md'), 'utf8');
+  const body = skill.replace(/\r\n/g, '\n').replace(/^---\n[\s\S]*?\n---\n/, '').trim();
+  return [
+    `<!-- Added by PreflightKit ${pkg.version} (${REPO}). Re-run \`npx preflightkit rules\` to update. -->`,
+    '',
+    body,
+    '',
+    '## Before you deploy',
+    'Run `npx preflightkit` and fix every `[fail]` result. `[warn]` results are',
+    'advisory: check each one. `[error]` means a scanner did not run, so that part',
+    'was not checked. Do not add suppressions or lower the audit level without the',
+    "user's agreement.",
+  ].join('\n');
+}
+
+function rules(args) {
+  const force = args.includes('--force');
+  const names = args.filter((a) => a !== '--force').map((a) => a.replace(/^--/, ''));
+  const bad = names.find((n) => n !== 'all' && !RULE_TARGETS[n]);
+  if (bad) {
+    console.error(`preflightkit: unknown rules target "${bad}". Use --agents, --copilot, --cursor, --claude, --windsurf or --all.`);
+    return 2;
+  }
+  const targets = names.includes('all') ? Object.keys(RULE_TARGETS)
+    : names.length ? names : DEFAULT_RULE_TARGETS;
+  const section = `${START}\n${rulesText()}\n${END}\n`;
+  let status = 0;
+
+  for (const name of targets) {
+    const t = RULE_TARGETS[name];
+    const dest = path.join(process.cwd(), t.file);
+    const existing = fs.existsSync(dest) ? fs.readFileSync(dest, 'utf8') : null;
+    let next;
+    let verb;
+    if (t.kind === 'own') {
+      if (existing !== null && !existing.includes(START) && !force) {
+        console.error(`Skipped ${t.file}: it exists and wasn't made by PreflightKit. Use --force to overwrite.`);
+        status = 1;
+        continue;
+      }
+      next = t.header + section;
+      verb = existing === null ? 'Created' : 'Updated';
+    } else if (existing === null) {
+      next = section;
+      verb = 'Created';
+    } else {
+      const i = existing.indexOf(START);
+      const j = existing.indexOf(END);
+      if (i >= 0 && j > i) {
+        next = existing.slice(0, i) + section.trimEnd() + existing.slice(j + END.length);
+        verb = 'Updated';
+      } else {
+        next = `${existing.trimEnd()}\n\n${section}`;
+        verb = 'Added rules to';
+      }
+    }
+    if (next === existing) {
+      console.log(`Up to date: ${t.file}`);
+      continue;
+    }
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, next);
+    console.log(`${verb} ${t.file}`);
+  }
+  if (status === 0) console.log('\nCommit these files so everyone on the team, and every assistant, gets the same rules.');
+  return status;
+}
+
+// --- pre-commit --------------------------------------------------------------
+
+const HOOK_START = '# preflightkit:start';
+const HOOK_END = '# preflightkit:end';
+const HOOK_BLOCK = `${HOOK_START}
+# PreflightKit: stop commits that contain secrets. Skip once with: git commit --no-verify
+if command -v gitleaks >/dev/null 2>&1; then
+  if gitleaks git --help >/dev/null 2>&1; then
+    gitleaks git --pre-commit --staged --redact --no-banner --verbose
+  else
+    gitleaks protect --staged --redact --no-banner --verbose
+  fi
+  if [ $? -ne 0 ]; then
+    echo "PreflightKit: a possible secret is staged. Remove it (and rotate it if it's real)," >&2
+    echo "or mark a false positive with a gitleaks:allow comment." >&2
+    exit 1
+  fi
+else
+  echo "PreflightKit: gitleaks isn't installed, so staged changes weren't checked for secrets." >&2
+  echo "Run: npx preflightkit doctor" >&2
+fi
+${HOOK_END}`;
+
+function git(args) {
+  const r = spawnSync('git', args, { encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+
+function preCommit() {
+  const hooksDir = git(['rev-parse', '--path-format=absolute', '--git-path', 'hooks']);
+  if (!hooksDir) {
+    console.error('preflightkit: run this inside a git repository.');
+    return 2;
+  }
+  // Husky 9 points core.hooksPath at .husky/_ and runs the scripts in .husky/.
+  const dest = path.basename(hooksDir) === '_' && path.basename(path.dirname(hooksDir)) === '.husky'
+    ? path.join(path.dirname(hooksDir), 'pre-commit')
+    : path.join(hooksDir, 'pre-commit');
+  const existing = fs.existsSync(dest) ? fs.readFileSync(dest, 'utf8').replace(/\r\n/g, '\n') : null;
+  let next;
+  if (existing === null) {
+    next = `#!/bin/sh\n${HOOK_BLOCK}\n`;
+  } else {
+    const i = existing.indexOf(HOOK_START);
+    const j = existing.indexOf(HOOK_END);
+    next = i >= 0 && j > i
+      ? existing.slice(0, i) + HOOK_BLOCK + existing.slice(j + HOOK_END.length)
+      : `${existing.trimEnd()}\n\n${HOOK_BLOCK}\n`;
+  }
+  const rel = path.relative(process.cwd(), dest) || dest;
+  if (next === existing) {
+    console.log(`Up to date: ${rel}`);
+    return 0;
+  }
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, next, { mode: 0o755 });
+  fs.chmodSync(dest, 0o755);
+  console.log(`${existing === null ? 'Created' : 'Updated'} ${rel}`);
+  console.log('Every commit is now checked for secrets with gitleaks before it is made.');
+  if (!which('gitleaks')) console.log('Install gitleaks to turn the check on: npx preflightkit doctor');
+  if (existing !== null && /lefthook|pre-commit\.com|generated by pre-commit/i.test(existing)) {
+    console.log('Note: this hook is managed by another tool and may be regenerated. Add gitleaks to that tool\'s config instead.');
+  }
+  return 0;
+}
+
+// --- checklist ---------------------------------------------------------------
 
 function checklist() {
   process.stdout.write(fs.readFileSync(path.join(ROOT, 'SECURITY-CHECKLIST.md'), 'utf8'));
@@ -74,15 +394,22 @@ function main(argv) {
       console.log(pkg.version); return 0;
     case 'init':
       return init(rest.includes('--force'));
+    case 'rules':
+      return rules(rest);
+    case 'doctor':
+      return doctor(rest[0]);
+    case 'pre-commit':
+      return preCommit();
+    case 'baseline':
+      return check(['--write-baseline', ...rest]);
     case 'checklist':
       return checklist();
     case 'check':
-      return check(rest[0]);
+      return check(rest);
     case undefined:
-      return check('.');
+      return check([]);
     default:
-      if (cmd.startsWith('-')) { console.error(`preflightkit: unknown option ${cmd}\n\n${HELP}`); return 2; }
-      return check(cmd);   // treat as a path
+      return check(argv);   // a path and/or check options
   }
 }
 

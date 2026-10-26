@@ -5,6 +5,9 @@ developers everywhere, so clear and accurate contributions matter more than long
 ones.
 
 ## Good first contributions
+Look for issues labelled **good first issue**. False-positive reports (there's
+an issue template) are also very welcome: each one makes the checks sharper.
+
 - **Add a framework guide.** Copy any file in `docs/security/` and keep its
   structure: *top risks → the fix in code → a quick self-check*.
 - **Fix something wrong or outdated.** Versions and CVEs change. Link the
