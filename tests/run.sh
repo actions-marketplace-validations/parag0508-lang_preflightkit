@@ -15,7 +15,7 @@ for needle in "search.php" "pickle.loads" "shell=True" "dangerouslySetInnerHTML"
   check "  found: $needle" grep -q "$needle" /tmp/pk-vuln.log
 done
 if command -v semgrep >/dev/null 2>&1; then
-  check "semgrep scanned the fixture files" grep -qE "Targets scanned: [1-9]" /tmp/pk-vuln.log
+  check "semgrep reported its own findings" grep -qE "python\.lang\.security|typescript\.react\.security|php\.lang\.security" /tmp/pk-vuln.log
 fi
 
 bash scripts/security-check.sh fixtures/clean >/tmp/pk-clean.log 2>&1

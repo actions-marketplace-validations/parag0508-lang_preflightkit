@@ -104,6 +104,21 @@ error() { printf '  \033[35m[error]\033[0m %s\n' "$1"; ERR=$((ERR+1)); ERR_MSGS+
 skip()  { printf '  \033[90m[skip]\033[0m  %s\n' "$1"; SKIP=$((SKIP+1)); }
 have()  { command -v "$1" >/dev/null 2>&1; }
 
+# Every external tool runs under a time limit, so one slow scanner can't hang
+# the whole check. Override with PREFLIGHTKIT_TIMEOUT=<seconds> (default 300).
+# (--version weeds out Windows' unrelated timeout.exe.)
+STEP_TIMEOUT="${PREFLIGHTKIT_TIMEOUT:-300}"
+if timeout --version >/dev/null 2>&1; then TO=(timeout -k 10 "$STEP_TIMEOUT")
+elif have gtimeout; then TO=(gtimeout -k 10 "$STEP_TIMEOUT")
+else TO=(); fi
+# timed_out <name>: when the last tool hit the time limit, report it and succeed.
+timed_out() {
+  case "$code" in
+    124|137) error "$1 timed out after ${STEP_TIMEOUT}s, so it didn't finish. Raise PREFLIGHTKIT_TIMEOUT, or skip big folders in .preflightkitignore." ;;
+    *) return 1 ;;
+  esac
+}
+
 # .preflightkitignore: one path or glob per line, relative to the project root.
 # "*" also matches across folders; lines starting with "#" are comments.
 IGNORES=()
@@ -158,20 +173,22 @@ if have gitleaks; then
     { [ -f "$TARGET/.gitleaksignore" ] && cat "$TARGET/.gitleaksignore"; echo; baseline_ids gitleaks; } > "$TMPD/gitleaksignore"
     gl+=(--gitleaks-ignore-path "$TMPD/gitleaksignore")
   fi
-  ( cd "$TARGET" && "${gl[@]}" ); code=$?
+  ( cd "$TARGET" && ${TO[@]+"${TO[@]}"} "${gl[@]}" ); code=$?
   if [ "$WRITE_BASELINE" -eq 1 ] && [ -f "$TMPD/gitleaks.json" ]; then
     grep -oE '"Fingerprint": *"[^"]*"' "$TMPD/gitleaks.json" | sed -E 's/^"Fingerprint": *"(.*)"$/gitleaks \1/' >> "$NEW_BASELINE"
   fi
   case $code in
     0) ok "gitleaks found no secrets" ;;
     3) fail "gitleaks found potential secrets — review above (accept a false positive with a gitleaks:allow comment or .gitleaksignore)" ;;
+    124|137) timed_out gitleaks ;;
     *) error "gitleaks could not run (exit code $code) — see above" ;;
   esac
 elif have trufflehog; then
-  trufflehog filesystem --fail "$TARGET"; code=$?
+  ${TO[@]+"${TO[@]}"} trufflehog filesystem --fail "$TARGET"; code=$?
   case $code in
     0)   ok "trufflehog found no secrets" ;;
     183) fail "trufflehog found potential secrets — review above" ;;
+    124|137) timed_out trufflehog ;;
     *)   error "trufflehog could not run (exit code $code) — see above" ;;
   esac
 else
@@ -191,16 +208,19 @@ if have semgrep; then
     [ -n "$(git -C "$TARGET" status --porcelain 2>/dev/null)" ] \
       && echo "  Note: Semgrep findings in uncommitted changes aren't covered by the baseline. Commit first to include them."
   fi
+  # Explicit rulesets: unlike --config=auto they also work with metrics turned off.
   # PYTHONUTF8: on Windows, Semgrep otherwise writes reports in the ANSI code page and crashes.
   # Run inside the project: the baseline commit is looked up in its git history.
-  ( cd "$TARGET" && PYTHONUTF8=1 semgrep scan --config=auto --error --no-git-ignore ${sg_args[@]+"${sg_args[@]}"} . ); code=$?
+  ( cd "$TARGET" && PYTHONUTF8=1 ${TO[@]+"${TO[@]}"} semgrep scan --config p/default --config p/security-audit \
+      --metrics=off --error --no-git-ignore --quiet ${sg_args[@]+"${sg_args[@]}"} . ); code=$?
   case $code in
     0) ok "semgrep found no issues" ;;
     1) warn "semgrep flagged issues — review above (accept a reviewed one with a nosemgrep comment)" ;;
+    124|137) timed_out semgrep ;;
     *) error "semgrep could not run (exit code $code) — see above" ;;
   esac
 else
-  skip "no semgrep. Install: pip install semgrep  (then: semgrep --config=auto)"
+  skip "no semgrep. Install: pip install semgrep  (then: semgrep --config p/default)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -209,11 +229,12 @@ ran_dep=0
 
 # run_audit <command...>: run it in $AUDIT_DIR and print its output.
 # Leaves the output in $out and the exit code in $code.
-run_audit() { ran_dep=1; out=$(cd "$AUDIT_DIR" && "$@" 2>&1); code=$?; printf '%s\n' "$out"; }
+run_audit() { ran_dep=1; out=$(cd "$AUDIT_DIR" && ${TO[@]+"${TO[@]}"} "$@" 2>&1); code=$?; printf '%s\n' "$out"; }
 
 # result <name> <error-regex> <clean-regex>: classify the last run of an
 # auditor that filters by the audit level itself and exits non-zero on a match.
 result() {
+  timed_out "$1" && return
   if grep -qE "$2" <<<"$out"; then error "$1 could not run — see the error above. Nothing was audited."
   elif [ "$code" -ne 0 ]; then fail "$1 found $AUDIT_LEVEL or more severe vulnerabilities"
   elif grep -qE "$3" <<<"$out"; then ok "$1 clean"
@@ -237,6 +258,7 @@ audit_dir() {
     run_audit composer audit --locked ${PROD_ONLY:+--no-dev}
     case $code in   # bit 1: vulnerable packages, bit 2: abandoned packages
       0)   ok "composer audit$at clean" ;;
+      124|137) timed_out "composer audit$at" ;;
       1|3) severity_result "composer audit$at" 'Severity[ |]+' ;;
       2)   warn "composer audit$at found abandoned packages — review above" ;;
       *)   error "composer audit$at could not run — see the error above. Nothing was audited." ;;
@@ -262,6 +284,7 @@ audit_dir() {
   if { [ -f "$AUDIT_DIR/requirements.txt" ] || [ -f "$AUDIT_DIR/pyproject.toml" ]; } && have pip-audit; then
     if [ -f "$AUDIT_DIR/requirements.txt" ]; then run_audit pip-audit -r requirements.txt; else run_audit pip-audit .; fi
     if [ "$code" -eq 0 ]; then ok "pip-audit$at clean"
+    elif timed_out "pip-audit$at"; then :
     elif grep -qE 'Found [0-9]+ known vulnerabilit' <<<"$out"; then fail "pip-audit$at found known vulnerabilities (it reports no severity, so all of them block)"
     else error "pip-audit$at could not run — see the error above. Nothing was audited."
     fi
@@ -271,19 +294,22 @@ audit_dir() {
     case $code in
       0) ok "govulncheck$at clean" ;;
       3) fail "govulncheck$at found vulnerabilities your code actually calls" ;;
+      124|137) timed_out "govulncheck$at" ;;
       *) error "govulncheck$at could not run — see the error above. Nothing was audited." ;;
     esac
   fi
   if [ -f "$AUDIT_DIR/Gemfile.lock" ] && have bundle-audit; then
     run_audit bundle-audit check --update
     if [ "$code" -eq 0 ]; then ok "bundle-audit$at clean"
+    elif timed_out "bundle-audit$at"; then :
     elif grep -q 'Vulnerabilities found' <<<"$out"; then severity_result "bundle-audit$at" 'Criticality: '
     else error "bundle-audit$at could not run — see the error above. Nothing was audited."
     fi
   fi
   if ls "$AUDIT_DIR"/*.csproj "$AUDIT_DIR"/*.sln >/dev/null 2>&1 && have dotnet; then
     run_audit dotnet list package --vulnerable --include-transitive
-    if [ "$code" -ne 0 ]; then error "dotnet package check$at could not run — see the error above. Nothing was audited."
+    if timed_out "dotnet package check$at"; then :
+    elif [ "$code" -ne 0 ]; then error "dotnet package check$at could not run — see the error above. Nothing was audited."
     elif grep -q "has the following vulnerable packages" <<<"$out"; then severity_result "dotnet package check$at" '^ *>.* '
     else ok "dotnet package check$at clean"
     fi
@@ -320,12 +346,13 @@ fi
 # ---------------------------------------------------------------------------
 say "4. Filesystem / container vulnerability scan"
 if have trivy; then
-  # Local .env files are expected to hold secrets and should be gitignored;
-  # committed secrets are caught by gitleaks above. Skipping them avoids false
-  # alarms and keeps real credentials out of the output.
+  # Secrets are covered by gitleaks (step 1, with git history), so Trivy only
+  # checks dependencies and misconfiguration: its secret scanner reads every file
+  # and is very slow on big folders. Local .env files and build output are skipped.
   # Findings exit with 3, so any other non-zero code means Trivy itself failed.
-  tv=(trivy fs --quiet --scanners "vuln,secret,misconfig" --severity "$TRIVY_SEVERITY" --exit-code 3
+  tv=(trivy fs --quiet --skip-version-check --scanners "vuln,misconfig" --severity "$TRIVY_SEVERITY" --exit-code 3
       --skip-dirs "**/node_modules" --skip-dirs "**/.git" --skip-dirs "**/.next"
+      --skip-dirs "**/dist" --skip-dirs "**/build" --skip-dirs "**/vendor"
       --skip-files "**/.env" --skip-files "**/.env.local" --skip-files "**/.env.*.local")
   for p in ${IGNORES[@]+"${IGNORES[@]}"}; do tv+=(--skip-dirs "**/$p" --skip-files "**/$p"); done
   [ -n "$INCLUDE_DEV" ] && tv+=(--include-dev-deps)
@@ -335,17 +362,18 @@ if have trivy; then
   elif [ -f "$TARGET/.trivyignore" ]; then
     tv+=(--ignorefile "$TARGET/.trivyignore")
   fi
-  "${tv[@]}" "$TARGET"; code=$?
+  ${TO[@]+"${TO[@]}"} "${tv[@]}" "$TARGET"; code=$?
   # Trivy writes one format per run; the second run reuses the downloaded database.
-  [ -n "$SARIF_DIR" ] && "${tv[@]}" --format sarif --output "$SARIF_DIR/trivy.sarif" --exit-code 0 "$TARGET" >/dev/null 2>&1
+  [ -n "$SARIF_DIR" ] && ${TO[@]+"${TO[@]}"} "${tv[@]}" --format sarif --output "$SARIF_DIR/trivy.sarif" --exit-code 0 "$TARGET" >/dev/null 2>&1
   if [ "$WRITE_BASELINE" -eq 1 ] && [ "$code" -eq 3 ]; then
-    "${tv[@]}" --format json --output "$TMPD/trivy.json" --exit-code 0 "$TARGET" >/dev/null 2>&1
+    ${TO[@]+"${TO[@]}"} "${tv[@]}" --format json --output "$TMPD/trivy.json" --exit-code 0 "$TARGET" >/dev/null 2>&1
     grep -oE '"(VulnerabilityID|RuleID|AVDID)": *"[^"]*"' "$TMPD/trivy.json" 2>/dev/null \
       | sed -E 's/^"[A-Za-z]+": *"(.*)"$/trivy \1/' >> "$NEW_BASELINE"
   fi
   case $code in
     0) ok "trivy found no $TRIVY_SEVERITY issues" ;;
-    3) fail "trivy found $TRIVY_SEVERITY vulnerabilities, secrets or misconfigurations — review above (accept one in .trivyignore)" ;;
+    3) fail "trivy found $TRIVY_SEVERITY vulnerabilities or misconfigurations — review above (accept one in .trivyignore)" ;;
+    124|137) timed_out trivy ;;
     *) error "trivy could not run (exit code $code) — see above" ;;
   esac
 else
@@ -363,12 +391,12 @@ EXTS='php|phtml|js|jsx|mjs|cjs|ts|tsx|vue|svelte|py|rb|erb|java|kt|go|cs|cshtml|
 if have rg; then
   globs=(-g "*.{${EXTS//|/,}}"); for d in $SKIP_DIRS; do globs+=(-g "!$d"); done
   set -f; for f in $SKIP_FILES; do globs+=(-g "!$f"); done; set +f
-  raw=$(cd "$TARGET" && rg -n --no-heading -i "${globs[@]}" -e "$CODE_PATTERNS|$SECRET_PATTERN" . 2>/dev/null | head -n 500)
+  raw=$(cd "$TARGET" && ${TO[@]+"${TO[@]}"} rg -n --no-heading -i "${globs[@]}" -e "$CODE_PATTERNS|$SECRET_PATTERN" . 2>/dev/null | head -n 500)
 else
   opts=(); for e in ${EXTS//|/ }; do opts+=(--include="*.$e"); done
   for d in $SKIP_DIRS; do opts+=(--exclude-dir="$d"); done
   set -f; for f in $SKIP_FILES; do opts+=(--exclude="$f"); done; set +f
-  raw=$(cd "$TARGET" && grep -rniE "${opts[@]}" "$CODE_PATTERNS|$SECRET_PATTERN" . 2>/dev/null | head -n 500)
+  raw=$(cd "$TARGET" && ${TO[@]+"${TO[@]}"} grep -rniE "${opts[@]}" "$CODE_PATTERNS|$SECRET_PATTERN" . 2>/dev/null | head -n 500)
 fi
 # Drop accepted and known-safe matches. Paths are "./file:line:text".
 kept=0; ignored=0; baselined=0; shown=""
